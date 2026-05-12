@@ -34,6 +34,15 @@ def location_choice_keyboard(kind: str, locations: list[Location]) -> InlineKeyb
     return builder.as_markup()
 
 
+def trip_type_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки выбора типа поездки."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✈️ В одну сторону", callback_data="trip_type:one_way")
+    builder.button(text="🔁 Туда и обратно", callback_data="trip_type:round_trip")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def offer_subscribe_keyboard(token: str) -> InlineKeyboardMarkup:
     """Кнопка подписки на конкретный найденный вариант."""
     builder = InlineKeyboardBuilder()
