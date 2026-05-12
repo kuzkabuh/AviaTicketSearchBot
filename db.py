@@ -59,6 +59,41 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_status_check ON subscriptions(statu
 CREATE UNIQUE INDEX IF NOT EXISTS ux_active_subscription_duplicate
 ON subscriptions(telegram_user_id, duplicate_key)
 WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS users (
+    telegram_user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    created_at TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+CREATE INDEX IF NOT EXISTS idx_users_last_activity_at ON users(last_activity_at);
+
+CREATE TABLE IF NOT EXISTS bot_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_user_id INTEGER,
+    event_type TEXT NOT NULL,
+    details TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bot_events_type_created ON bot_events(event_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_bot_events_user_created ON bot_events(telegram_user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS search_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_user_id INTEGER,
+    origin_code TEXT NOT NULL,
+    destination_code TEXT NOT NULL,
+    departure_date TEXT NOT NULL,
+    passengers INTEGER NOT NULL,
+    results_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_search_history_created_at ON search_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_search_history_route_created ON search_history(origin_code, destination_code, created_at);
 """
 
 
@@ -210,3 +245,235 @@ async def mark_subscription_deleted(subscription_id: int, telegram_user_id: int)
             return cursor.rowcount > 0
 
     return await asyncio.to_thread(_delete)
+
+
+async def upsert_user(
+    telegram_user_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> None:
+    """Создает пользователя или обновляет его последнюю активность."""
+    now = utcnow_iso()
+
+    def _upsert() -> None:
+        with _connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO users (telegram_user_id, username, first_name, last_name, created_at, last_activity_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    last_activity_at = excluded.last_activity_at
+                """,
+                (telegram_user_id, username, first_name, last_name, now, now),
+            )
+            connection.commit()
+
+    await asyncio.to_thread(_upsert)
+
+
+async def record_bot_event(telegram_user_id: int | None, event_type: str, details: str | None = None) -> None:
+    """Сохраняет событие использования для аналитики."""
+    now = utcnow_iso()
+
+    def _insert() -> None:
+        with _connect() as connection:
+            connection.execute(
+                "INSERT INTO bot_events (telegram_user_id, event_type, details, created_at) VALUES (?, ?, ?, ?)",
+                (telegram_user_id, event_type, details, now),
+            )
+            connection.commit()
+
+    await asyncio.to_thread(_insert)
+
+
+async def record_search_history(
+    telegram_user_id: int | None,
+    origin_code: str,
+    destination_code: str,
+    departure_date: str,
+    passengers: int,
+    results_count: int,
+    status: str,
+) -> None:
+    """Сохраняет историю поиска билетов."""
+    now = utcnow_iso()
+
+    def _insert() -> None:
+        with _connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO search_history
+                (telegram_user_id, origin_code, destination_code, departure_date, passengers, results_count, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (telegram_user_id, origin_code, destination_code, departure_date, passengers, results_count, status, now),
+            )
+            connection.commit()
+
+    await asyncio.to_thread(_insert)
+
+
+def _period_condition(days: int | None, column: str = "created_at") -> tuple[str, tuple[str, ...]]:
+    if days is None:
+        return "", ()
+    if days == 0:
+        return f" AND date({column}) = date('now')", ()
+    return f" AND datetime({column}) >= datetime('now', ?)", (f"-{days} days",)
+
+
+def _scalar(connection: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> int:
+    value = connection.execute(query, params).fetchone()[0]
+    return int(value or 0)
+
+
+async def get_overview_stats() -> dict[str, int]:
+    """Возвращает общую статистику использования."""
+    def _stats() -> dict[str, int]:
+        with _connect() as connection:
+            return {
+                "users_total": _scalar(connection, "SELECT COUNT(*) FROM users"),
+                "users_active_24h": _scalar(connection, "SELECT COUNT(*) FROM users WHERE datetime(last_activity_at) >= datetime('now', '-1 day')"),
+                "users_active_7d": _scalar(connection, "SELECT COUNT(*) FROM users WHERE datetime(last_activity_at) >= datetime('now', '-7 days')"),
+                "users_active_30d": _scalar(connection, "SELECT COUNT(*) FROM users WHERE datetime(last_activity_at) >= datetime('now', '-30 days')"),
+                "searches_total": _scalar(connection, "SELECT COUNT(*) FROM search_history"),
+                "searches_today": _scalar(connection, "SELECT COUNT(*) FROM search_history WHERE date(created_at) = date('now')"),
+                "searches_7d": _scalar(connection, "SELECT COUNT(*) FROM search_history WHERE datetime(created_at) >= datetime('now', '-7 days')"),
+                "subscriptions_total": _scalar(connection, "SELECT COUNT(*) FROM subscriptions"),
+                "subscriptions_active": _scalar(connection, "SELECT COUNT(*) FROM subscriptions WHERE status = ?", (ACTIVE,)),
+                "subscriptions_inactive": _scalar(connection, "SELECT COUNT(*) FROM subscriptions WHERE status != ?", (ACTIVE,)),
+                "price_notifications": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type IN ('price_notification_up', 'price_notification_down')"),
+                "price_checks_success": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type IN ('price_check_success', 'price_changed')"),
+                "price_checks_errors": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type IN ('price_check_error', 'api_error', 'flight_not_found')"),
+            }
+    return await asyncio.to_thread(_stats)
+
+
+async def get_period_stats(days: int | None) -> dict[str, int]:
+    """Возвращает статистику за период."""
+    condition, params = _period_condition(days)
+    def _stats() -> dict[str, int]:
+        with _connect() as connection:
+            return {
+                "new_users": _scalar(connection, f"SELECT COUNT(*) FROM users WHERE 1=1{condition}", params),
+                "searches": _scalar(connection, f"SELECT COUNT(*) FROM search_history WHERE 1=1{condition}", params),
+                "subscriptions_created": _scalar(connection, f"SELECT COUNT(*) FROM subscriptions WHERE 1=1{condition}", params),
+                "notifications": _scalar(connection, f"SELECT COUNT(*) FROM bot_events WHERE event_type IN ('price_notification_up', 'price_notification_down'){condition}", params),
+                "errors": _scalar(connection, f"SELECT COUNT(*) FROM bot_events WHERE event_type IN ('price_check_error', 'api_error', 'flight_not_found'){condition}", params),
+            }
+    return await asyncio.to_thread(_stats)
+
+
+async def get_popular_routes(days: int | None = 30, limit: int = 10) -> list[dict[str, Any]]:
+    condition, params = _period_condition(days)
+    def _routes() -> list[dict[str, Any]]:
+        with _connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT origin_code, destination_code, COUNT(*) AS count
+                FROM search_history
+                WHERE 1=1{condition}
+                GROUP BY origin_code, destination_code
+                ORDER BY count DESC, origin_code, destination_code
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+    return await asyncio.to_thread(_routes)
+
+
+async def get_popular_cities(kind: str, days: int | None = 30, limit: int = 5) -> list[dict[str, Any]]:
+    column = "origin_code" if kind == "origin" else "destination_code"
+    condition, params = _period_condition(days)
+    def _cities() -> list[dict[str, Any]]:
+        with _connect() as connection:
+            rows = connection.execute(
+                f"SELECT {column} AS code, COUNT(*) AS count FROM search_history WHERE 1=1{condition} GROUP BY {column} ORDER BY count DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+    return await asyncio.to_thread(_cities)
+
+
+async def get_subscription_analytics() -> dict[str, float | int]:
+    """Возвращает аналитику подписок."""
+    def _stats() -> dict[str, float | int]:
+        with _connect() as connection:
+            active = _scalar(connection, "SELECT COUNT(*) FROM subscriptions WHERE status = ?", (ACTIVE,))
+            users_with_active = _scalar(connection, "SELECT COUNT(DISTINCT telegram_user_id) FROM subscriptions WHERE status = ?", (ACTIVE,))
+            return {
+                "total": _scalar(connection, "SELECT COUNT(*) FROM subscriptions"),
+                "active": active,
+                "inactive": _scalar(connection, "SELECT COUNT(*) FROM subscriptions WHERE status != ?", (ACTIVE,)),
+                "avg_active_per_user": active / users_with_active if users_with_active else 0.0,
+                "price_down_notifications": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type = 'price_notification_down'"),
+                "price_up_notifications": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type = 'price_notification_up'"),
+                "not_found_checks": _scalar(connection, "SELECT COUNT(*) FROM bot_events WHERE event_type = 'flight_not_found'"),
+            }
+    return await asyncio.to_thread(_stats)
+
+
+async def get_users_summary() -> dict[str, int]:
+    """Возвращает сводку по пользователям."""
+    def _stats() -> dict[str, int]:
+        with _connect() as connection:
+            return {
+                "total": _scalar(connection, "SELECT COUNT(*) FROM users"),
+                "new_today": _scalar(connection, "SELECT COUNT(*) FROM users WHERE date(created_at) = date('now')"),
+                "active_7d": _scalar(connection, "SELECT COUNT(*) FROM users WHERE datetime(last_activity_at) >= datetime('now', '-7 days')"),
+                "with_active_subscriptions": _scalar(connection, "SELECT COUNT(DISTINCT telegram_user_id) FROM subscriptions WHERE status = ?", (ACTIVE,)),
+            }
+    return await asyncio.to_thread(_stats)
+
+
+async def get_latest_users(limit: int = 10) -> list[dict[str, Any]]:
+    """Возвращает последних зарегистрированных пользователей."""
+    def _users() -> list[dict[str, Any]]:
+        with _connect() as connection:
+            rows = connection.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(row) for row in rows]
+    return await asyncio.to_thread(_users)
+
+
+async def get_users_with_active_subscriptions(limit: int = 10) -> list[dict[str, Any]]:
+    """Возвращает пользователей с наибольшим числом активных подписок."""
+    def _users() -> list[dict[str, Any]]:
+        with _connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.telegram_user_id, COALESCE(u.username, s.telegram_username) AS username, COUNT(*) AS active_subscriptions
+                FROM subscriptions s
+                LEFT JOIN users u ON u.telegram_user_id = s.telegram_user_id
+                WHERE s.status = ?
+                GROUP BY s.telegram_user_id, username
+                ORDER BY active_subscriptions DESC
+                LIMIT ?
+                """,
+                (ACTIVE, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+    return await asyncio.to_thread(_users)
+
+
+async def count_active_subscriptions() -> int:
+    """Считает активные подписки."""
+    def _count() -> int:
+        with _connect() as connection:
+            return _scalar(connection, "SELECT COUNT(*) FROM subscriptions WHERE status = ?", (ACTIVE,))
+    return await asyncio.to_thread(_count)
+
+
+async def check_database_status() -> str:
+    """Проверяет доступность SQLite-БД."""
+    def _check() -> str:
+        try:
+            with _connect() as connection:
+                connection.execute("SELECT 1").fetchone()
+            return "доступна"
+        except sqlite3.Error as error:
+            return f"ошибка: {error}"
+    return await asyncio.to_thread(_check)

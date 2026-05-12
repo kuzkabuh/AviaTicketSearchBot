@@ -46,12 +46,18 @@ async def check_subscription_price(subscription: dict[str, Any], bot: Bot | None
     """Проверяет актуальную цену одной подписки и при необходимости уведомляет."""
     subscription_id = subscription["id"]
     now = db.utcnow_iso()
-    offers = await search_ticket_offers(subscription["origin_code"], subscription["destination_code"], subscription["departure_date"])
+    try:
+        offers = await search_ticket_offers(subscription["origin_code"], subscription["destination_code"], subscription["departure_date"])
+    except Exception as error:
+        await db.update_subscription(subscription_id, last_checked_at=now, failed_checks=int(subscription.get("failed_checks") or 0) + 1)
+        await db.record_bot_event(subscription.get("telegram_user_id"), "price_check_error", f"subscription={subscription_id};error={error}")
+        raise
     match = find_matching_offer(subscription, offers)
 
     if not match:
         failed_checks = int(subscription.get("failed_checks") or 0) + 1
         await db.update_subscription(subscription_id, last_checked_at=now, failed_checks=failed_checks)
+        await db.record_bot_event(subscription.get("telegram_user_id"), "flight_not_found", f"subscription={subscription_id}")
         logger.warning("Tracked flight not found subscription=%s failed_checks=%s", subscription_id, failed_checks)
         return {"status": "not_found", "old_price": subscription.get("last_price"), "new_price": None}
 
@@ -65,6 +71,7 @@ async def check_subscription_price(subscription: dict[str, Any], bot: Bot | None
 
     if new_price is None:
         await db.update_subscription(subscription_id, **update_fields)
+        await db.record_bot_event(subscription.get("telegram_user_id"), "price_check_success", f"subscription={subscription_id};no_price")
         return {"status": "no_price", "old_price": old_price, "new_price": None}
 
     changed = old_price is not None and new_price != old_price
@@ -80,11 +87,14 @@ async def check_subscription_price(subscription: dict[str, Any], bot: Bot | None
                     disable_web_page_preview=True,
                 )
                 update_fields["last_notified_at"] = now
+                event_type = "price_notification_down" if new_price < old_price else "price_notification_up"
+                await db.record_bot_event(subscription.get("telegram_user_id"), event_type, f"subscription={subscription_id};old={old_price};new={new_price}")
                 logger.info("Price notification sent subscription=%s old=%s new=%s", subscription_id, old_price, new_price)
             except Exception as exc:  # noqa: BLE001 - уведомление не должно ронять фоновую проверку
                 logger.exception("Failed to send price notification subscription=%s: %s", subscription_id, exc)
 
     await db.update_subscription(subscription_id, **update_fields)
+    await db.record_bot_event(subscription.get("telegram_user_id"), "price_changed" if changed else "price_check_success", f"subscription={subscription_id}")
     return {
         "status": "changed" if changed else "unchanged",
         "old_price": old_price,

@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from keyboards import start_search_keyboard
+import db
 from states import PopularDirectionState, TicketSearchState
 from utils.admin_access import is_admin
 
@@ -28,6 +29,7 @@ WELCOME_TEXT = (
 async def start_command(message: Message, state: FSMContext) -> None:
     """Показывает приветствие и сбрасывает незавершенный FSM-сценарий."""
     await state.clear()
+    await db.record_bot_event(message.from_user.id if message.from_user else None, "bot_start")
     await message.answer(
         WELCOME_TEXT,
         reply_markup=start_search_keyboard(is_admin=is_admin(message.from_user.id)),
