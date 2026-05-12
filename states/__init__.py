@@ -2,7 +2,6 @@
 
 from states.search_states import PopularDirectionState, TicketSearchState
 
-# Алиасы оставлены для обратной совместимости с ранними вариантами миграции.
 SearchStates = TicketSearchState
 PopularStates = PopularDirectionState
 
