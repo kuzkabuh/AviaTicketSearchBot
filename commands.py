@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from database import DatabaseManager
 from analytics import AnalyticsTracker
 from utils import parse_utm_params, extract_referral_id
+import asyncio
 
 db_manager = None
 analytics_tracker = None
@@ -14,8 +15,53 @@ def set_db_manager(manager):
 def set_analytics_tracker(tracker):
     global analytics_tracker
     analytics_tracker = tracker
+	
+# Глобальные функции для получения городов и рейсов
+def get_city_code(city_name: str):
+    # Заглушка — в реальном проекте будет обращение к API
+    city_codes = {
+        "Москва": ("MOW", "Москва"),
+        "Казань": ("KZN", "Казань"),
+        "СПб": ("LED", "Санкт-Петербург"),
+        "Санкт-Петербург": ("LED", "Санкт-Петербург"),
+        "Новосибирск": ("OVB", "Новосибирск"),
+        "Екатеринбург": ("SVX", "Екатеринбург"),
+        "Нижний Новгород": ("GOJ", "Нижний Новгород"),
+    }
+    return city_codes.get(city_name, (None, None))
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_flight_options(origin_code: str, dest_code: str, date: str, passengers: int):
+    # Заглушка — в реальном проекте будет вызов API
+    return [
+        {
+            "price": 5600,
+            "airline": "S7",
+            "departure": "2026-05-27T08:00",
+            "arrival": "2026-05-27T10:30",
+            "link": "/search?query=..."
+        }
+    ]
+
+async def send_flight_messages(update, flights, o_code, d_code, o_name, d_name, date, passengers, direction, is_return, return_date):
+    # Заглушка — отправка сообщений с результатами
+    for flight in flights:
+        price = flight.get("price")
+        airline = flight.get("airline")
+        dep_time = flight.get("departure")
+        arr_time = flight.get("arrival")
+        link = f"https://www.aviasales.ru{flight.get('link')}"
+        
+        res_msg = (
+            f"{direction}\n"
+            f"🛫 {o_name} → {d_name} | {date}\n"
+            f"🕐 {dep_time[11:16]} → {arr_time[11:16]}\n"
+            f"✈️ {airline}\n"
+            f"💰 {price} ₽\n"
+            f"🔗 [Купить билет]({link})"
+        )
+        await update.message.reply_text(res_msg, parse_mode="Markdown")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Приветствие и обработка реферальных ссылок."""
     user_id = update.effective_user.id
     username = update.effective_user.username
@@ -66,7 +112,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Основная логика поиска."""
     # Отслеживание события поиска
     analytics_tracker.track_event("track_command", user_id=update.effective_user.id)
@@ -126,7 +172,7 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ret_date, passengers, "ОБРАТНО 🛬", is_return=True, return_date=ret_date
         )
 
-async def list_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Список подписок."""
     # Отслеживание события просмотра подписок
     analytics_tracker.track_event("list_subscriptions", user_id=update.effective_user.id)
@@ -142,11 +188,11 @@ async def list_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         dates = f"📅 {dep}" + (f" → {ret}" if ret else "")
         btn = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Удалить", callback_data=f"del|{sid}")]])
         await update.message.reply_text(
-            f"📍 {oname} → {dname}\n{dates}\n💰 Порог: {price} ₽",
+            f"📍 {oname} → {d_name}\n{dates}\n💰 Порог: {price} ₽",
             reply_markup=btn
         )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка команды /help."""
     analytics_tracker.track_event("help_command", user_id=update.effective_user.id)
     
@@ -166,7 +212,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка команды /support."""
     analytics_tracker.track_event("support_command", user_id=update.effective_user.id)
     

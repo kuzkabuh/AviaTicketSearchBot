@@ -1,24 +1,45 @@
-import asyncio
 import logging
-from aiogram import Bot, Dispatcher, executor
+import asyncio
+from telegram.ext import Application
 from config import BOT_TOKEN
-from handlers import send_welcome, search_handler
+from commands import get_handlers
 
-# Настройка логирования для отслеживания ошибок в консоли
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден в переменных окружения!")
+async def main():
+    """Запуск бота."""
+    
+    # 1. Проверка наличия токена внутри функции
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN не найден в конфигурации! Проверьте файл config.py или .env")
+        return # Теперь return находится внутри функции, что допустимо
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+    # 2. Создание приложения
+    # Используем современный метод run_polling для упрощения жизненного цикла
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # 3. Регистрация обработчиков
+    # Получаем список хендлеров из файла commands.py
+    handlers = get_handlers()
+    for handler in handlers:
+        application.add_handler(handler)
+    
+    logger.info("Бот инициализирован и готов к работе...")
 
-# Регистрация обработчиков
-dp.register_message_handler(send_welcome, commands=['start', 'help'])
-dp.register_message_handler(search_handler) # Все остальные сообщения считаем поиском
+    # 4. Запуск бота
+    # Метод run_polling автоматически обрабатывает старт, стоп и ожидание сигналов (Ctrl+C)
+    await application.run_polling()
 
 if __name__ == '__main__':
-    # Запуск бота в режиме long polling
-    print("Бот запущен...")
-    executor.start_polling(dp, skip_updates=True)
+    try:
+        # Запуск асинхронного цикла
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Процесс бота прерван пользователем.")
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка: {e}")
