@@ -1,7 +1,8 @@
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import Message
-from aiogram import ContextTypes
+from aiogram.types import CallbackQuery, Message
+from aiogram import Bot
 from database import DatabaseManager
 from analytics import AnalyticsTracker
 from utils import parse_utm_params, extract_referral_id
@@ -63,7 +64,7 @@ async def send_flight_messages(message: Message, flights, o_code, d_code, o_name
         )
         await message.answer(res_msg, parse_mode="Markdown")
 
-async def start(message: Message, bot: types.Bot) -> None:
+async def start(message: Message, bot: Bot) -> None:
     """Приветствие и обработка реферальных ссылок."""
     user_id = message.from_user.id
     username = message.from_user.username
@@ -114,7 +115,7 @@ async def start(message: Message, bot: types.Bot) -> None:
         parse_mode="Markdown"
     )
 
-async def track(message: Message, bot: types.Bot) -> None:
+async def track(message: Message, bot: Bot) -> None:
     """Основная логика поиска."""
     # Отслеживание события поиска
     analytics_tracker.track_event("track_command", user_id=message.from_user.id)
@@ -174,7 +175,7 @@ async def track(message: Message, bot: types.Bot) -> None:
             ret_date, passengers, "ОБРАТНО 🛬", is_return=True, return_date=ret_date
         )
 
-async def list_subscriptions(message: Message, bot: types.Bot) -> None:
+async def list_subscriptions(message: Message, bot: Bot) -> None:
     """Список подписок."""
     # Отслеживание события просмотра подписок
     analytics_tracker.track_event("list_subscriptions", user_id=message.from_user.id)
@@ -194,7 +195,7 @@ async def list_subscriptions(message: Message, bot: types.Bot) -> None:
             reply_markup=btn
         )
 
-async def help_command(message: Message, bot: types.Bot) -> None:
+async def help_command(message: Message, bot: Bot) -> None:
     """Обработка команды /help."""
     analytics_tracker.track_event("help_command", user_id=message.from_user.id)
     
@@ -214,7 +215,7 @@ async def help_command(message: Message, bot: types.Bot) -> None:
         parse_mode="Markdown"
     )
 
-async def support(message: Message, bot: types.Bot) -> None:
+async def support(message: Message, bot: Bot) -> None:
     """Обработка команды /support."""
     analytics_tracker.track_event("support_command", user_id=message.from_user.id)
     
