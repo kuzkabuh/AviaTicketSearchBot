@@ -8,6 +8,7 @@
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -32,6 +33,15 @@ class Settings:
     price_check_interval_minutes: int = 60
     subscription_not_found_notify_interval_hours: int = 24
     duplicate_notification_cooldown_minutes: int = 30
+    admin_telegram_ids: tuple[int, ...] = ()
+    bot_project_dir: str = str(Path(__file__).resolve().parent)
+    bot_git_branch: str = "master"
+    bot_service_name: str = "avia-ticket-bot.service"
+    bot_update_script: str = str(Path(__file__).resolve().parent / "update.sh")
+    bot_update_log_path: str = str(Path(__file__).resolve().parent / "logs" / "update.log")
+    bot_update_lock_path: str = str(Path(__file__).resolve().parent / "runtime" / "update.lock")
+    bot_update_status_path: str = str(Path(__file__).resolve().parent / "runtime" / "update_status.json")
+    bot_update_command_timeout_seconds: int = 120
 
     def validate(self) -> None:
         """Проверяет наличие обязательных переменных перед стартом приложения."""
@@ -65,6 +75,21 @@ def _get_int_env(*names: str, default: int) -> int:
         return default
 
 
+def _get_int_tuple_env(*names: str) -> tuple[int, ...]:
+    """Читает список целых чисел через запятую из переменной окружения."""
+    raw_value = _get_env(*names)
+    values: list[int] = []
+    for item in raw_value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            values.append(int(item))
+        except ValueError:
+            continue
+    return tuple(values)
+
+
 def _get_bool_env(*names: str, default: bool) -> bool:
     """Безопасно читает булеву настройку из .env."""
     raw_value = _get_env(*names, default="true" if default else "false").lower()
@@ -90,6 +115,30 @@ settings = Settings(
     duplicate_notification_cooldown_minutes=max(
         1,
         _get_int_env("DUPLICATE_NOTIFICATION_COOLDOWN_MINUTES", default=30),
+    ),
+    admin_telegram_ids=_get_int_tuple_env("ADMIN_TELEGRAM_IDS"),
+    bot_project_dir=_get_env("BOT_PROJECT_DIR", default=str(Path(__file__).resolve().parent)),
+    bot_git_branch=_get_env("BOT_GIT_BRANCH", default="master"),
+    bot_service_name=_get_env("BOT_SERVICE_NAME", default="avia-ticket-bot.service"),
+    bot_update_script=_get_env(
+        "BOT_UPDATE_SCRIPT",
+        default=str(Path(__file__).resolve().parent / "update.sh"),
+    ),
+    bot_update_log_path=_get_env(
+        "BOT_UPDATE_LOG_PATH",
+        default=str(Path(__file__).resolve().parent / "logs" / "update.log"),
+    ),
+    bot_update_lock_path=_get_env(
+        "BOT_UPDATE_LOCK_PATH",
+        default=str(Path(__file__).resolve().parent / "runtime" / "update.lock"),
+    ),
+    bot_update_status_path=_get_env(
+        "BOT_UPDATE_STATUS_PATH",
+        default=str(Path(__file__).resolve().parent / "runtime" / "update_status.json"),
+    ),
+    bot_update_command_timeout_seconds=max(
+        10,
+        _get_int_env("BOT_UPDATE_COMMAND_TIMEOUT_SECONDS", default=120),
     ),
 )
 

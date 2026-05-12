@@ -85,3 +85,99 @@ utils/validators.py               # проверка дат, IATA и колич�
 utils/formatters.py               # форматирование билетов, подписок и уведомлений
 migrations/001_create_subscriptions.sql # SQL-схема подписок
 ```
+
+## Административная панель и обновления из Telegram
+
+Бот поддерживает закрытый административный раздел внутри Telegram. Доступ к нему получают только пользователи, чьи Telegram ID перечислены в переменной `ADMIN_TELEGRAM_IDS`.
+
+### Новые переменные окружения
+
+Добавьте в `.env`:
+
+```env
+# Администраторы бота: Telegram ID через запятую.
+ADMIN_TELEGRAM_IDS=123456789,987654321
+
+# Абсолютный путь к рабочей копии проекта на сервере.
+BOT_PROJECT_DIR=/opt/Bots/AviaTicketSearchBot
+
+# Ветка, из которой бот проверяет и устанавливает обновления.
+BOT_GIT_BRANCH=master
+
+# systemd service unit, который запускает бота.
+BOT_SERVICE_NAME=avia-ticket-bot.service
+
+# Абсолютный путь к серверному сценарию обновления.
+BOT_UPDATE_SCRIPT=/opt/Bots/AviaTicketSearchBot/update.sh
+
+# Путь к файлу с последним логом обновления.
+BOT_UPDATE_LOG_PATH=/opt/Bots/AviaTicketSearchBot/logs/update.log
+
+# Путь к lock-каталогу, защищающему от параллельных обновлений.
+BOT_UPDATE_LOCK_PATH=/opt/Bots/AviaTicketSearchBot/runtime/update.lock
+
+# Путь к JSON-файлу статуса обновления для уведомления после рестарта.
+BOT_UPDATE_STATUS_PATH=/opt/Bots/AviaTicketSearchBot/runtime/update_status.json
+
+# Таймаут отдельных Git-команд проверки обновлений из Python-кода.
+BOT_UPDATE_COMMAND_TIMEOUT_SECONDS=120
+
+# Использовать sudo для рестарта systemd-сервиса в update.sh.
+BOT_SERVICE_RESTART_WITH_SUDO=true
+```
+
+### Как работает админ-панель
+
+1. Администратор отправляет команду `/admin` или нажимает кнопку `⚙️ Админ-панель` в главном меню.
+2. Бот проверяет Telegram ID по списку `ADMIN_TELEGRAM_IDS`.
+3. Если пользователь не администратор, бот отвечает: `⛔ У вас нет доступа к административному разделу.`
+4. Администратор видит меню:
+   - `📌 Версия бота` — показывает версию из файла `VERSION`, ветку, commit hash, дату commit, путь проекта и URL origin.
+   - `🔍 Проверить обновления` — выполняет `git fetch origin <ветка>` и сравнивает `HEAD` с `origin/<ветка>`.
+   - `⬆️ Обновить бота` — запрашивает подтверждение и запускает `update.sh` в отдельной сессии.
+   - `📋 Последний лог обновления` — показывает статус и последние строки `logs/update.log`.
+   - `◀️ В главное меню` — возвращает к обычным кнопкам бота.
+
+### Полный сценарий обновления через Telegram
+
+1. Администратор открывает `/admin`.
+2. Нажимает `🔍 Проверить обновления`.
+3. Если найдены новые коммиты, нажимает `⬆️ Обновить бота`.
+4. Подтверждает действие кнопкой `✅ Да, обновить`.
+5. Бот сохраняет статус `in_progress` в `BOT_UPDATE_STATUS_PATH`, сообщает о запуске обновления и стартует `update.sh` через `subprocess.Popen` без shell.
+6. `update.sh` создает lock-каталог `BOT_UPDATE_LOCK_PATH`, пишет лог в `BOT_UPDATE_LOG_PATH`, выполняет `git fetch`, проверяет отставание локального commit от `origin/<ветка>` и при наличии обновлений выполняет `git pull --ff-only origin <ветка>`.
+7. Скрипт активирует `.venv`, если оно есть, устанавливает зависимости из `requirements.txt`, применяет Alembic-миграции при наличии `alembic.ini`, затем применяет SQL-файлы из `migrations/` через `sqlite3`, если утилита доступна.
+8. Скрипт перезапускает systemd-сервис из `BOT_SERVICE_NAME` и проверяет `systemctl is-active`.
+9. Перед завершением скрипт записывает итоговый статус `success`, `no_updates` или `error` в `BOT_UPDATE_STATUS_PATH`.
+10. После рестарта бот при старте читает статус и отправляет администратору итоговое сообщение.
+
+### Настройка sudoers для рестарта сервиса
+
+Если бот запущен от пользователя `avia-bot`, а сервис называется `avia-ticket-bot.service`, создайте файл `/etc/sudoers.d/avia-ticket-bot` через `visudo`:
+
+```bash
+sudo visudo -f /etc/sudoers.d/avia-ticket-bot
+```
+
+Минимальные права только на нужную команду рестарта:
+
+```sudoers
+avia-bot ALL=(root) NOPASSWD: /bin/systemctl restart avia-ticket-bot.service, /bin/systemctl is-active avia-ticket-bot.service
+```
+
+На некоторых системах `systemctl` расположен в `/usr/bin/systemctl`. Проверьте путь командой `command -v systemctl` и укажите фактический путь:
+
+```sudoers
+avia-bot ALL=(root) NOPASSWD: /usr/bin/systemctl restart avia-ticket-bot.service, /usr/bin/systemctl is-active avia-ticket-bot.service
+```
+
+Не выдавайте пользователю бота полный `NOPASSWD: ALL`.
+
+### Проверка административного раздела
+
+- **Доступ администратора:** добавьте свой Telegram ID в `ADMIN_TELEGRAM_IDS`, перезапустите бота и отправьте `/admin`. Должно открыться меню админ-панели.
+- **Запрет обычному пользователю:** отправьте `/admin` с аккаунта, ID которого нет в `ADMIN_TELEGRAM_IDS`. Бот должен ответить `⛔ У вас нет доступа к административному разделу.`
+- **Проверка обновлений:** в админ-панели нажмите `🔍 Проверить обновления`. При актуальном коде бот сообщит, что обновления не найдены; при отставании покажет локальный и удаленный commit.
+- **Запуск обновления:** нажмите `⬆️ Обновить бота`, затем `✅ Да, обновить`. Повторный запуск во время активного обновления должен блокироваться lock-каталогом.
+- **Просмотр лога:** нажмите `📋 Последний лог обновления`. Бот покажет статус, время запуска/завершения и последние строки `BOT_UPDATE_LOG_PATH`.
+- **Сообщение после рестарта:** после успешного `systemctl restart` бот при старте читает `BOT_UPDATE_STATUS_PATH` и отправляет администратору итоговое уведомление.

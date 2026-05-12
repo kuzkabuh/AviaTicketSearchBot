@@ -53,11 +53,13 @@ def subscriptions_keyboard(subscriptions: list[dict[str, Any]]) -> InlineKeyboar
     return builder.as_markup()
 
 
-def start_search_keyboard() -> InlineKeyboardMarkup:
+def start_search_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура быстрого перехода к основным сценариям бота."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔎 Найти билет", callback_data="menu:search")
     builder.button(text="🔥 Популярные направления", callback_data="menu:popular")
     builder.button(text="🔔 Мои подписки", callback_data="menu:subscriptions")
+    if is_admin:
+        builder.button(text="⚙️ Админ-панель", callback_data="menu:admin")
     builder.adjust(1)
     return builder.as_markup()
