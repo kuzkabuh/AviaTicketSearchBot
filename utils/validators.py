@@ -1,95 +1,76 @@
-"""
-============================================================
-Файл: utils/validators.py
-Версия: 2.0.0
-Дата изменения: 12.05.2026
-Описание:
- Валидаторы IATA-кодов и дат.
-============================================================
-"""
+"""Валидация пользовательского ввода для поиска авиабилетов."""
 
-import re
 from datetime import datetime, timedelta
+import re
 
-# Регулярное выражение для проверки формата IATA (строго 3 заглавные латинские буквы)
-IATA_PATTERN = r"^[A-Z]{3}$"
+# IATA-код города/аэропорта состоит из трех латинских букв. Пользователь может
+# вводить код в любом регистре, но дальше приложение работает с upper-case.
+IATA_PATTERN = re.compile(r"^[A-Z]{3}$")
 
-# Часто используемые IATA-коды.
-# Можно расширять.
+# Часто используемые коды городов/аэропортов. Проверка по этому набору снижает
+# число очевидных ошибок ввода до отправки запроса в Travelpayouts. При этом
+# форматная проверка вынесена отдельно, чтобы при необходимости расширить список.
 KNOWN_IATA_CODES = {
-    "MOW",
-    "LED",
     "AER",
-    "DME",
-    "VKO",
-    "SVO",
-    "KZN",
-    "OVB",
-    "DXB",
-    "IST",
-    "BKK",
-    "AYT",
-    "TBS",
-    "EVN",
-    "JFK",
-    "LAX",
-    "HKT",
-    "GOI",
-    "DEL",
     "AMS",
+    "AYT",
     "BER",
+    "BKK",
+    "DEL",
+    "DME",
+    "DXB",
+    "EVN",
+    "GOI",
+    "HKT",
+    "IST",
+    "JFK",
+    "KZN",
+    "LAX",
+    "LED",
+    "MOW",
+    "OVB",
     "PAR",
-    "ROM"
+    "ROM",
+    "SIP",
+    "SVO",
+    "TBS",
+    "VKO",
 }
 
-def validate_iata(code: str) -> bool:
+
+def normalize_iata(code: str | None) -> str:
+    """Обрезает пробелы и приводит IATA-код к верхнему регистру."""
+    return (code or "").strip().upper()
+
+
+def validate_iata_format(code: str | None) -> bool:
+    """Проверяет только синтаксис IATA-кода: ровно три латинские буквы."""
+    return bool(IATA_PATTERN.fullmatch(normalize_iata(code)))
+
+
+def validate_iata(code: str | None) -> bool:
     """
-    Проверка корректности IATA-кода.
-    
-    Требования:
-    - Только 3 латинские буквы.
-    - Код должен существовать в множестве KNOWN_IATA_CODES.
+    Проверяет IATA-код по формату и списку известных популярных кодов.
+
+    Если пользователь вводит неизвестный код, бот просит повторить ввод до
+    отправки запроса в API. Список можно расширять без изменения хендлеров.
     """
-    if not code or not isinstance(code, str):
-        return False
-
-    # Убираем пробелы и приводим к верхнему регистру для стандартизации
-    code = code.upper().strip()
-
-    # Проверка формата через регулярное выражение
-    if not re.match(IATA_PATTERN, code):
-        return False
-
-    # Проверка наличия кода в списке известных аэропортов
-    return code in KNOWN_IATA_CODES
+    normalized_code = normalize_iata(code)
+    return validate_iata_format(normalized_code) and normalized_code in KNOWN_IATA_CODES
 
 
-def validate_date(date_string: str) -> bool:
+def validate_date(date_string: str | None) -> bool:
     """
-    Проверка даты.
+    Проверяет дату вылета в формате YYYY-MM-DD.
 
-    Формат:
-    YYYY-MM-DD
-
-    Ограничения:
-    - не раньше завтрашнего дня
-    - не позже чем через 365 дней
+    Допускаются даты от завтра до 365 дней вперед: прошедшие даты и слишком
+    дальние даты не отправляются в API, потому что они с высокой вероятностью
+    вернут пустой или некорректный результат.
     """
     try:
-        # Преобразуем строку в объект date
-        target_date = datetime.strptime(date_string, "%Y-%m-%d").date()
-        
-        # Получаем текущую дату
-        today = datetime.now().date()
-        
-        # Вычисляем границы допустимого диапазона
-        tomorrow = today + timedelta(days=1)
-        max_date = today + timedelta(days=365)
-
-        # Проверяем, входит ли дата в интервал [завтра; через год]
-        return tomorrow <= target_date <= max_date
-
-    except (ValueError, TypeError):
-        # ValueError — если формат строки не совпадает с маской
-        # TypeError — если передана не строка
+        target_date = datetime.strptime((date_string or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
         return False
+
+    today = datetime.now().date()
+    return today + timedelta(days=1) <= target_date <= today + timedelta(days=365)

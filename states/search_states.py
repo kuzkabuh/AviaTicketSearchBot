@@ -1,21 +1,16 @@
 """
-============================================================
-Файл: states/search_states.py
-Версия: 2.0.0
-Дата изменения: 12.05.2026
-Описание:
-    FSM состояния для поиска авиабилетов.
-============================================================
+FSM-состояния для сценариев поиска авиабилетов.
+
+В aiogram 3.x вместо telebot.register_next_step_handler используется FSM:
+каждый ответ пользователя обрабатывается только в ожидаемом состоянии, а
+промежуточные данные маршрута сохраняются в FSMContext.
 """
 
-from aiogram.fsm.state import State
-from aiogram.fsm.state import StatesGroup
+from aiogram.fsm.state import State, StatesGroup
 
 
 class TicketSearchState(StatesGroup):
-    """
-    FSM состояния процесса поиска билетов.
-    """
+    """Состояния пошагового поиска: город вылета, город прилета и дата."""
 
     waiting_origin = State()
     waiting_destination = State()
@@ -23,9 +18,7 @@ class TicketSearchState(StatesGroup):
 
 
 class PopularDirectionState(StatesGroup):
-    """
-    FSM состояния популярных направлений.
-    """
+    """Состояния сценария популярных направлений из выбранного города."""
 
     waiting_origin = State()
     waiting_choice = State()

@@ -1,29 +1,49 @@
+"""Точка входа AviaTicketSearchBot на aiogram 3.x."""
+
 import asyncio
 import logging
+
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import BOT_TOKEN
-from handlers import start, search
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+from api import close_api_session
+from config import settings
+from handlers import search, start
 
-async def main():
-    # Создаём экземпляр бота
-    bot = Bot(token=BOT_TOKEN)
-    # Хранилище состояний (можно использовать RedisStorage для production, но для примера MemoryStorage)
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
 
-    # Подключаем роутеры из хендлеров
-    dp.include_router(start.router)
-    dp.include_router(search.router)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-    # Удаляем вебхук (на случай, если он был установлен ранее)
-    await bot.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем поллинг
-    await dp.start_polling(bot)
+async def main() -> None:
+    """
+    Инициализирует Bot/Dispatcher, подключает Router-ы и запускает polling.
+
+    MemoryStorage подходит для простого запуска и демонстрации FSM. В production
+    его можно заменить на RedisStorage без изменения хендлеров.
+    """
+    settings.validate()
+
+    bot = Bot(token=settings.bot_token)
+    dispatcher = Dispatcher(storage=MemoryStorage())
+
+    # Роутер стартовых команд подключается первым, затем сценарии поиска.
+    dispatcher.include_router(start.router)
+    dispatcher.include_router(search.router)
+
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Bot polling started")
+        await dispatcher.start_polling(bot)
+    finally:
+        # Закрываем aiohttp-сессию API-клиента и HTTP-сессию Telegram Bot API.
+        await close_api_session()
+        await bot.session.close()
+        logger.info("Bot polling stopped")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
