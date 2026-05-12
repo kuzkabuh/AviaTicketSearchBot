@@ -1,15 +1,15 @@
 """
 Асинхронный клиент Travelpayouts / Aviasales API.
 
-В модуле нет заглушек: все публичные функции делают реальные HTTP-запросы к
-эндпоинтам Travelpayouts через aiohttp и возвращают нормализованные данные,
-удобные для Telegram-хендлеров.
+Публичные функции делают реальные HTTP-запросы к Travelpayouts через aiohttp и
+возвращают нормализованные предложения, удобные для Telegram-хендлеров,
+подписок и фоновой проверки цен.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from config import settings
+from services.locations import get_location_by_code
 
 logger = logging.getLogger(__name__)
 
@@ -27,25 +28,25 @@ class TicketOffer:
 
     origin: str
     destination: str
+    origin_city: str
+    origin_airport: str
+    destination_city: str
+    destination_airport: str
     date: str
+    departure_time: str
+    arrival_time: str
+    duration: int | None
     price: int | float | None
+    currency: str
     airline: str
     flight_number: str
     transfers: int | None
     link: str
+    offer_id: str
 
     def as_dict(self) -> dict[str, Any]:
-        """Возвращает словарь для простого форматирования в хендлерах."""
-        return {
-            "origin": self.origin,
-            "destination": self.destination,
-            "date": self.date,
-            "price": self.price,
-            "airline": self.airline,
-            "flight_number": self.flight_number,
-            "transfers": self.transfers,
-            "link": self.link,
-        }
+        """Возвращает словарь для простого форматирования и сохранения."""
+        return asdict(self)
 
 
 class TravelPayoutsAPI:
@@ -54,7 +55,7 @@ class TravelPayoutsAPI:
     def __init__(self) -> None:
         self.base_url = settings.base_url
         self.token = settings.travelpayouts_token
-        self.currency = settings.currency
+        self.currency = settings.currency.upper()
         self.marker = settings.marker
         self.timeout = aiohttp.ClientTimeout(total=settings.request_timeout)
         self._session: aiohttp.ClientSession | None = None
@@ -71,21 +72,9 @@ class TravelPayoutsAPI:
             await self._session.close()
 
     async def _make_request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Выполняет GET-запрос к API и возвращает JSON-словарь.
-
-        В каждый запрос добавляется токен Travelpayouts. Параметры с пустыми
-        значениями удаляются, чтобы API не получал ``None`` или пустые строки.
-        Такой подход важен для эндпоинтов цен: необязательные фильтры должны
-        отсутствовать в query string, а не передаваться пустыми.
-        """
+        """Выполняет GET-запрос к API и возвращает JSON-словарь."""
         url = f"{self.base_url}{endpoint}"
-        request_params = {
-            key: value
-            for key, value in {**params, "token": self.token}.items()
-            if value not in (None, "")
-        }
-
+        request_params = {key: value for key, value in {**params, "token": self.token}.items() if value not in (None, "")}
         session = await self._get_session()
 
         try:
@@ -94,7 +83,6 @@ class TravelPayoutsAPI:
                     body = await response.text()
                     logger.warning("Travelpayouts API error %s for %s: %s", response.status, endpoint, body)
                     return None
-
                 payload = await response.json(content_type=None)
                 if not isinstance(payload, dict):
                     logger.warning("Unexpected Travelpayouts payload type for %s: %s", endpoint, type(payload))
@@ -104,19 +92,19 @@ class TravelPayoutsAPI:
             logger.exception("HTTP request to Travelpayouts failed: %s", exc)
             return None
 
-    def _build_ticket_link(self, origin: str, destination: str, departure_date: str) -> str:
-        """
-        Формирует ссылку на выдачу Aviasales для конкретного маршрута.
+    def _build_ticket_link(self, origin: str, destination: str, departure_date: str, raw_item: dict[str, Any] | None = None) -> str:
+        """Формирует ссылку на билет или выдачу Aviasales для конкретного маршрута."""
+        raw_item = raw_item or {}
+        for field in ("link", "url", "deeplink"):
+            value = raw_item.get(field)
+            if isinstance(value, str) and value.startswith("http"):
+                return value
+            if isinstance(value, str) and value.startswith("/"):
+                return f"https://www.aviasales.ru{value}"
 
-        Aviasales использует формат ``ORIGINDDMMDESTINATION1`` для поиска в одну
-        сторону. Например, MOW -> AER на 2026-06-15 превращается в
-        ``MOW1506AER1``. Marker добавляется query-параметром, если он задан в .env.
-        """
         try:
             date_part = datetime.strptime(departure_date[:10], "%Y-%m-%d").strftime("%d%m")
         except ValueError:
-            # Если API вернул нестандартную дату, оставляем безопасную ссылку на
-            # общий поиск маршрута, но не ломаем показ результата пользователю.
             date_part = ""
 
         search_path = f"{origin}{date_part}{destination}1"
@@ -125,65 +113,105 @@ class TravelPayoutsAPI:
 
     def _extract_departure_date(self, raw_item: dict[str, Any], fallback_date: str) -> str:
         """Достает дату вылета из ответа API или возвращает дату из запроса."""
-        departure_at = raw_item.get("departure_at")
-        if isinstance(departure_at, str) and len(departure_at) >= 10:
-            return departure_at[:10]
+        for field in ("departure_at", "depart_date", "departure_date"):
+            value = raw_item.get(field)
+            if isinstance(value, str) and len(value) >= 10:
+                return value[:10]
         return fallback_date
 
-    def _normalize_offer(
-        self,
-        raw_item: dict[str, Any],
-        origin: str,
-        destination: str,
-        fallback_date: str,
-    ) -> TicketOffer:
-        """
-        Преобразует один элемент ответа API в единый формат TicketOffer.
+    @staticmethod
+    def _extract_time(raw_item: dict[str, Any], *fields: str) -> str:
+        """Извлекает время HH:MM из ISO-строки или готового поля времени."""
+        for field in fields:
+            value = raw_item.get(field)
+            if isinstance(value, str):
+                if "T" in value and len(value) >= 16:
+                    return value[11:16]
+                if len(value) >= 5 and value[2:3] == ":":
+                    return value[:5]
+        return "—"
 
-        Разные эндпоинты Travelpayouts могут возвращать похожие поля в немного
-        разной структуре. Здесь централизованно извлекаются цена, авиакомпания,
-        номер рейса, количество пересадок и дата, а затем строится ссылка на
-        покупку/поиск билета на Aviasales.
-        """
+    @staticmethod
+    def _extract_int(raw_item: dict[str, Any], *fields: str) -> int | None:
+        """Безопасно извлекает целое число из одного из возможных полей."""
+        for field in fields:
+            value = raw_item.get(field)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+        return None
+
+    def _location_parts(self, code: str) -> tuple[str, str]:
+        """Возвращает город и аэропорт для IATA-кода."""
+        location = get_location_by_code(code)
+        if not location:
+            return code, code
+        return location.city, location.airport
+
+    def _normalize_offer(self, raw_item: dict[str, Any], origin: str, destination: str, fallback_date: str) -> TicketOffer:
+        """Преобразует один элемент ответа API в единый формат TicketOffer."""
         departure_date = self._extract_departure_date(raw_item, fallback_date)
-        airline = str(raw_item.get("airline") or "не указана")
-        flight_number = str(raw_item.get("flight_number") or "-")
-
-        transfers: int | None = None
-        raw_transfers = raw_item.get("transfers")
-        if isinstance(raw_transfers, int):
-            transfers = raw_transfers
-        elif isinstance(raw_transfers, str) and raw_transfers.isdigit():
-            transfers = int(raw_transfers)
+        airline = str(raw_item.get("airline") or raw_item.get("airline_code") or "не указана")
+        flight_number = str(raw_item.get("flight_number") or raw_item.get("flight") or "-")
+        transfers = self._extract_int(raw_item, "transfers", "number_of_changes", "changes")
+        duration = self._extract_int(raw_item, "duration", "duration_to", "total_duration")
+        departure_time = self._extract_time(raw_item, "departure_at", "departure_time")
+        arrival_time = self._extract_time(raw_item, "return_at", "arrival_at", "arrival_time")
+        origin_city, origin_airport = self._location_parts(origin)
+        destination_city, destination_airport = self._location_parts(destination)
+        offer_id = str(raw_item.get("uuid") or raw_item.get("proposal_id") or raw_item.get("id") or "")
+        if not offer_id:
+            offer_id = f"{origin}:{destination}:{departure_date}:{departure_time}:{arrival_time}:{airline}:{flight_number}:{transfers}:{raw_item.get('price')}"
 
         return TicketOffer(
             origin=origin,
             destination=destination,
+            origin_city=origin_city,
+            origin_airport=origin_airport,
+            destination_city=destination_city,
+            destination_airport=destination_airport,
             date=departure_date,
+            departure_time=departure_time,
+            arrival_time=arrival_time,
+            duration=duration,
             price=raw_item.get("price"),
+            currency=self.currency,
             airline=airline,
             flight_number=flight_number,
             transfers=transfers,
-            link=self._build_ticket_link(origin, destination, departure_date),
+            link=self._build_ticket_link(origin, destination, departure_date, raw_item),
+            offer_id=offer_id,
         )
 
-    async def search_cheap_tickets(self, origin: str, destination: str, date: str) -> list[dict[str, Any]]:
-        """
-        Ищет дешевые билеты через реальный эндпоинт ``/v1/prices/cheap``.
+    def _deduplicate_offers(self, offers: list[TicketOffer], limit: int) -> list[TicketOffer]:
+        """Удаляет одинаковые предложения и сортирует их по цене."""
+        unique: dict[tuple[Any, ...], TicketOffer] = {}
+        for offer in offers:
+            key = (offer.price, offer.airline, offer.flight_number, offer.departure_time, offer.arrival_time, offer.transfers, offer.duration)
+            unique.setdefault(key, offer)
+        result = list(unique.values())
+        result.sort(key=lambda offer: offer.price if isinstance(offer.price, (int, float)) else float("inf"))
+        return result[:limit]
 
-        Для конкретной даты Travelpayouts возвращает данные по направлению в
-        структуре ``data -> DESTINATION -> transfer_key -> ticket_info``. Поэтому
-        парсер проходит по всем вложенным предложениям, нормализует каждое и
-        сортирует результат по цене.
-        """
-        params = {
-            "origin": origin,
-            "destination": destination,
-            "depart_date": date,
-            "currency": self.currency,
-        }
+    async def search_cheap_tickets(self, origin: str, destination: str, date: str, limit: int | None = None) -> list[dict[str, Any]]:
+        """Ищет билеты в нескольких ценовых эндпоинтах и возвращает разные варианты."""
+        limit = limit or settings.ticket_results_limit
+        offers: list[TicketOffer] = []
+        offers.extend(await self._search_prices_cheap(origin, destination, date))
+        if len(offers) < max(settings.min_ticket_results, limit):
+            offers.extend(await self._search_prices_latest(origin, destination, date, limit=max(settings.min_ticket_results, limit)))
+        if len(offers) < max(settings.min_ticket_results, limit):
+            offers.extend(await self._search_calendar(origin, destination, date))
+
+        normalized = self._deduplicate_offers(offers, limit)
+        logger.info("Ticket search %s -> %s date=%s offers=%s", origin, destination, date, len(normalized))
+        return [offer.as_dict() for offer in normalized]
+
+    async def _search_prices_cheap(self, origin: str, destination: str, date: str) -> list[TicketOffer]:
+        """Парсит ``/v1/prices/cheap``."""
+        params = {"origin": origin, "destination": destination, "depart_date": date, "currency": self.currency.lower()}
         payload = await self._make_request("/v1/prices/cheap", params)
-
         if not payload or payload.get("success") is False:
             return []
 
@@ -191,64 +219,45 @@ class TravelPayoutsAPI:
         if not isinstance(destination_data, dict):
             return []
 
-        offers: list[TicketOffer] = []
+        raw_items = [destination_data] if "price" in destination_data else [item for item in destination_data.values() if isinstance(item, dict)]
+        return [self._normalize_offer(item, origin, destination, date) for item in raw_items]
 
-        # В большинстве ответов /v1/prices/cheap предложения лежат во вложенных
-        # ключах с количеством пересадок: {"0": {...}, "1": {...}}. На случай
-        # если API вернет один билет сразу в data[destination], поддерживаем и
-        # прямую структуру с полем price.
-        if "price" in destination_data:
-            offers.append(self._normalize_offer(destination_data, origin, destination, date))
-        else:
-            for raw_item in destination_data.values():
-                if isinstance(raw_item, dict):
-                    offers.append(self._normalize_offer(raw_item, origin, destination, date))
-
-        offers.sort(key=lambda offer: offer.price if isinstance(offer.price, (int, float)) else float("inf"))
-        return [offer.as_dict() for offer in offers]
-
-    async def get_calendar_prices(self, origin: str, destination: str, date: str) -> list[dict[str, Any]]:
-        """
-        Получает календарь цен через ``/v2/prices/calendar``.
-
-        Эндпоинт возвращает словарь в ключе ``data``. Ключи обычно являются
-        датами, а значения содержат цену и дополнительные параметры рейса. Для
-        хендлеров возвращается список нормализованных предложений.
-        """
+    async def _search_prices_latest(self, origin: str, destination: str, date: str, limit: int) -> list[TicketOffer]:
+        """Парсит ``/v2/prices/latest`` для получения нескольких вариантов."""
         params = {
             "origin": origin,
             "destination": destination,
-            "departure_at": date,
-            "currency": self.currency,
+            "beginning_of_period": date,
+            "period_type": "day",
+            "one_way": "true",
+            "currency": self.currency.lower(),
+            "limit": limit,
+            "show_to_affiliates": "true",
         }
-        payload = await self._make_request("/v2/prices/calendar", params)
+        payload = await self._make_request("/v2/prices/latest", params)
+        data = payload.get("data", []) if payload else []
+        if not isinstance(data, list):
+            return []
+        return [self._normalize_offer(item, origin, destination, date) for item in data if isinstance(item, dict)]
 
+    async def _search_calendar(self, origin: str, destination: str, date: str) -> list[TicketOffer]:
+        """Парсит ``/v2/prices/calendar`` как резервный источник."""
+        params = {"origin": origin, "destination": destination, "departure_at": date, "currency": self.currency.lower()}
+        payload = await self._make_request("/v2/prices/calendar", params)
         data = payload.get("data", {}) if payload else {}
         if not isinstance(data, dict):
             return []
+        return [self._normalize_offer(item, origin, destination, str(flight_date)) for flight_date, item in data.items() if isinstance(item, dict)]
 
-        offers: list[TicketOffer] = []
-        for flight_date, raw_item in data.items():
-            if isinstance(raw_item, dict):
-                offers.append(self._normalize_offer(raw_item, origin, destination, str(flight_date)))
-
-        offers.sort(key=lambda offer: offer.price if isinstance(offer.price, (int, float)) else float("inf"))
-        return [offer.as_dict() for offer in offers]
+    async def get_calendar_prices(self, origin: str, destination: str, date: str) -> list[dict[str, Any]]:
+        """Получает календарь цен через ``/v2/prices/calendar``."""
+        offers = await self._search_calendar(origin, destination, date)
+        return [offer.as_dict() for offer in self._deduplicate_offers(offers, settings.ticket_results_limit)]
 
     async def get_popular_directions(self, origin: str, limit: int = 5) -> list[dict[str, Any]]:
-        """
-        Получает популярные направления из города через ``/v1/city-directions``.
-
-        Ответ имеет вид ``data -> DESTINATION -> ticket_info``. Из каждого
-        направления извлекаются город назначения, цена, авиакомпания, дата и
-        ссылка на Aviasales. ``limit`` применяется после сортировки по цене.
-        """
-        params = {
-            "origin": origin,
-            "currency": self.currency,
-        }
+        """Получает популярные направления из города через ``/v1/city-directions``."""
+        params = {"origin": origin, "currency": self.currency.lower()}
         payload = await self._make_request("/v1/city-directions", params)
-
         data = payload.get("data", {}) if payload else {}
         if not isinstance(data, dict):
             return []
@@ -257,20 +266,9 @@ class TravelPayoutsAPI:
         for destination, raw_item in data.items():
             if not isinstance(raw_item, dict):
                 continue
-
             departure_date = self._extract_departure_date(raw_item, "")
-            directions.append(
-                {
-                    "origin": origin,
-                    "destination": destination,
-                    "date": departure_date,
-                    "price": raw_item.get("price"),
-                    "airline": raw_item.get("airline") or "не указана",
-                    "flight_number": raw_item.get("flight_number") or "-",
-                    "transfers": raw_item.get("transfers"),
-                    "link": self._build_ticket_link(origin, destination, departure_date),
-                }
-            )
+            offer = self._normalize_offer(raw_item, origin, destination, departure_date)
+            directions.append(offer.as_dict())
 
         directions.sort(key=lambda item: item["price"] if isinstance(item.get("price"), (int, float)) else float("inf"))
         return directions[:limit]
@@ -279,9 +277,9 @@ class TravelPayoutsAPI:
 travel_api = TravelPayoutsAPI()
 
 
-async def search_cheap_tickets(origin: str, destination: str, date: str) -> list[dict[str, Any]]:
+async def search_cheap_tickets(origin: str, destination: str, date: str, limit: int | None = None) -> list[dict[str, Any]]:
     """Функция-обертка для поиска дешевых билетов из хендлеров."""
-    return await travel_api.search_cheap_tickets(origin, destination, date)
+    return await travel_api.search_cheap_tickets(origin, destination, date, limit=limit)
 
 
 async def get_calendar_prices(origin: str, destination: str, date: str) -> list[dict[str, Any]]:

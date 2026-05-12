@@ -8,7 +8,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from api import close_api_session
 from config import settings
-from handlers import search, start
+import db
+from handlers import search, start, subscriptions
+from services.price_tracking import PriceTrackingService
 
 
 logging.basicConfig(
@@ -19,27 +21,25 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    """
-    Инициализирует Bot/Dispatcher, подключает Router-ы и запускает polling.
-
-    MemoryStorage подходит для простого запуска и демонстрации FSM. В production
-    его можно заменить на RedisStorage без изменения хендлеров.
-    """
+    """Инициализирует Bot/Dispatcher, БД, Router-ы, price tracking и polling."""
     settings.validate()
+    await db.init_db()
 
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher(storage=MemoryStorage())
+    price_tracking = PriceTrackingService(bot)
 
-    # Роутер стартовых команд подключается первым, затем сценарии поиска.
     dispatcher.include_router(start.router)
     dispatcher.include_router(search.router)
+    dispatcher.include_router(subscriptions.router)
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        price_tracking.start()
         logger.info("Bot polling started")
         await dispatcher.start_polling(bot)
     finally:
-        # Закрываем aiohttp-сессию API-клиента и HTTP-сессию Telegram Bot API.
+        await price_tracking.stop()
         await close_api_session()
         await bot.session.close()
         logger.info("Bot polling stopped")

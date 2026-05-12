@@ -3,38 +3,11 @@
 from datetime import datetime, timedelta
 import re
 
-# IATA-код города/аэропорта состоит из трех латинских букв. Пользователь может
-# вводить код в любом регистре, но дальше приложение работает с upper-case.
 IATA_PATTERN = re.compile(r"^[A-Z]{3}$")
 
-# Часто используемые коды городов/аэропортов. Проверка по этому набору снижает
-# число очевидных ошибок ввода до отправки запроса в Travelpayouts. При этом
-# форматная проверка вынесена отдельно, чтобы при необходимости расширить список.
 KNOWN_IATA_CODES = {
-    "AER",
-    "AMS",
-    "AYT",
-    "BER",
-    "BKK",
-    "DEL",
-    "DME",
-    "DXB",
-    "EVN",
-    "GOI",
-    "HKT",
-    "IST",
-    "JFK",
-    "KZN",
-    "LAX",
-    "LED",
-    "MOW",
-    "OVB",
-    "PAR",
-    "ROM",
-    "SIP",
-    "SVO",
-    "TBS",
-    "VKO",
+    "AER", "AMS", "AYT", "BER", "BKK", "DEL", "DME", "DXB", "EVN", "GOI", "HKT", "IST",
+    "JFK", "KZN", "LAX", "LED", "MOW", "OVB", "PAR", "ROM", "SIP", "SVO", "TBS", "VKO", "ZIA",
 }
 
 
@@ -49,24 +22,13 @@ def validate_iata_format(code: str | None) -> bool:
 
 
 def validate_iata(code: str | None) -> bool:
-    """
-    Проверяет IATA-код по формату и списку известных популярных кодов.
-
-    Если пользователь вводит неизвестный код, бот просит повторить ввод до
-    отправки запроса в API. Список можно расширять без изменения хендлеров.
-    """
+    """Проверяет IATA-код по формату и списку известных популярных кодов."""
     normalized_code = normalize_iata(code)
     return validate_iata_format(normalized_code) and normalized_code in KNOWN_IATA_CODES
 
 
 def validate_date(date_string: str | None) -> bool:
-    """
-    Проверяет дату вылета в формате YYYY-MM-DD.
-
-    Допускаются даты от завтра до 365 дней вперед: прошедшие даты и слишком
-    дальние даты не отправляются в API, потому что они с высокой вероятностью
-    вернут пустой или некорректный результат.
-    """
+    """Проверяет дату вылета в формате YYYY-MM-DD: от завтра до 365 дней вперед."""
     try:
         target_date = datetime.strptime((date_string or "").strip(), "%Y-%m-%d").date()
     except ValueError:
@@ -74,3 +36,11 @@ def validate_date(date_string: str | None) -> bool:
 
     today = datetime.now().date()
     return today + timedelta(days=1) <= target_date <= today + timedelta(days=365)
+
+
+def parse_positive_int(value: str | None) -> int | None:
+    """Возвращает положительное целое число или None для некорректного ввода."""
+    text = (value or "").strip()
+    if not re.fullmatch(r"[1-9]\d*", text):
+        return None
+    return int(text)
