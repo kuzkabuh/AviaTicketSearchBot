@@ -38,6 +38,17 @@ def validate_date(date_string: str | None) -> bool:
     return today + timedelta(days=1) <= target_date <= today + timedelta(days=365)
 
 
+def validate_return_date(return_date_string: str | None, departure_date_string: str | None) -> bool:
+    """Проверяет дату возврата: формат YYYY-MM-DD и строго позже даты вылета."""
+    try:
+        return_date = datetime.strptime((return_date_string or "").strip(), "%Y-%m-%d").date()
+        departure_date = datetime.strptime((departure_date_string or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return False
+
+    return return_date > departure_date
+
+
 def parse_positive_int(value: str | None) -> int | None:
     """Возвращает положительное целое число или None для некорректного ввода."""
     text = (value or "").strip()
