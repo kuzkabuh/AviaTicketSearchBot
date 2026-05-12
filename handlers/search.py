@@ -13,7 +13,7 @@ from aiogram.types import CallbackQuery, Message
 from api import get_popular_directions
 import db
 from config import settings
-from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard
+from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard, trip_type_keyboard
 from services.locations import Location, find_locations, get_location_by_code
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
@@ -76,8 +76,8 @@ async def _store_location_and_advance(target: Message | CallbackQuery, state: FS
         return
 
     await state.update_data(destination=location.code, destination_location=location.as_dict())
-    await state.set_state(TicketSearchState.waiting_date)
-    await message.answer("Введите дату вылета в формате YYYY-MM-DD, например 2026-06-15:")
+    await state.set_state(TicketSearchState.waiting_trip_type)
+    await message.answer("Выберите тип поездки:", reply_markup=trip_type_keyboard())
 
 
 async def _send_offers(message: Message, origin: str, destination: str, departure_date: str, passengers: int) -> None:
@@ -175,6 +175,26 @@ async def choose_destination(callback: CallbackQuery, state: FSMContext) -> None
         return
     await _store_location_and_advance(callback, state, "destination", location)
     await callback.answer()
+
+
+@router.callback_query(TicketSearchState.waiting_trip_type, F.data.startswith("trip_type:"))
+async def choose_trip_type(callback: CallbackQuery, state: FSMContext) -> None:
+    """Сохраняет тип поездки и переводит пользователя к вводу даты вылета."""
+    trip_type = (callback.data or "").split(":")[-1]
+    if trip_type not in {"one_way", "round_trip"}:
+        await callback.answer("Не удалось выбрать тип поездки", show_alert=True)
+        return
+
+    await state.update_data(trip_type=trip_type)
+    await state.set_state(TicketSearchState.waiting_date)
+    await callback.message.answer("Введите дату вылета в формате YYYY-MM-DD, например 2026-06-15:")
+    await callback.answer()
+
+
+@router.message(TicketSearchState.waiting_trip_type)
+async def process_trip_type_text(message: Message) -> None:
+    """Напоминает пользователю выбрать тип поездки inline-кнопкой."""
+    await message.answer("Пожалуйста, выберите тип поездки кнопкой ниже:", reply_markup=trip_type_keyboard())
 
 
 @router.message(TicketSearchState.waiting_date)
