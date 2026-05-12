@@ -1,47 +1,29 @@
-import logging
 import asyncio
+import logging
 from aiogram import Bot, Dispatcher
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN
-from commands import start, track, list_subscriptions, help_command, support
+from handlers import start, search
 
 # Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 async def main():
-    """Запуск бота."""
-    
-    # 1. Проверка наличия токена внутри функции
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN не найден в конфигурации! Проверьте файл config.py или .env")
-        return
-
-    # 2. Создание бота и диспетчера
+    # Создаём экземпляр бота
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
-    
-    # 3. Регистрация обработчиков команд
-    dp.message.register(start, Command("start"))
-    dp.message.register(track, Command("track"))
-    dp.message.register(list_subscriptions, Command("list"))
-    dp.message.register(help_command, Command("help"))
-    dp.message.register(support, Command("support"))
-    
-    logger.info("Бот инициализирован и готов к работе...")
+    # Хранилище состояний (можно использовать RedisStorage для production, но для примера MemoryStorage)
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
 
-    # 4. Запуск бота
+    # Подключаем роутеры из хендлеров
+    dp.include_router(start.router)
+    dp.include_router(search.router)
+
+    # Удаляем вебхук (на случай, если он был установлен ранее)
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    # Запускаем поллинг
     await dp.start_polling(bot)
 
-if __name__ == '__main__':
-    try:
-        # Запуск асинхронного цикла
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Процесс бота прерван пользователем.")
-    except Exception as e:
-        logger.error(f"Непредвиденная ошибка: {e}")
+if __name__ == "__main__":
+    asyncio.run(main())

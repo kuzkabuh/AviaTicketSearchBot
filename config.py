@@ -1,14 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения из файла .env
+# Загружаем переменные из .env файла (если есть)
 load_dotenv()
 
-# Токен телеграм-бота (получать у @BotFather)
-BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+# Токен Telegram-бота
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Токен API Travelpayouts (Aviasales)
+TRAVELPAYOUTS_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN")
 
-# Токен Travelpayouts (получать на travelpayouts.com)
-TRAVEL_API_TOKEN = os.getenv("TRAVEL_API_TOKEN") or os.getenv("TRAVELPAYOUTS_TOKEN")
-
-# Базовый URL для API поиска дешевых авиабилетов
-API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+# Проверяем, что оба токена заданы
+if not BOT_TOKEN or not TRAVELPAYOUTS_TOKEN:
+    raise ValueError("Не заданы переменные окружения BOT_TOKEN или TRAVELPAYOUTS_TOKEN")
