@@ -1,49 +1,74 @@
 #!/bin/bash
 
-echo "🚀 Установка AviaTicketSearchBot в /opt/Bots/AviaTicketSearchBot..."
+echo "🚀 Установка AviaTicketSearchBot..."
 
-echo "📁 Создание системной директории..."
-sudo mkdir -p /opt/Bots/AviaTicketSearchBot
-sudo chown $USER:$USER /opt/Bots/AviaTicketSearchBot
+# === Настройки ===
+REPO_URL="https://github.com/kuzkabuh/AviaTicketSearchBot.git"
+PROJECT_DIR="/opt/Bots/AviaTicketSearchBot"
+SERVICE_NAME="avia-ticket-search-bot"
 
-echo "📦 Клонирование репозитория (ветка master)..."
-cd /opt/Bots/AviaTicketSearchBot
+# === Проверка прав ===
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Этот скрипт нужно запускать с sudo или от root."
+  exit 1
+fi
 
-git clone -b master https://gitverse.ru/kuzkabuh/AviaTicketSearchBot.git temp_repo
+# === Установка зависимостей ===
+echo "📦 Устанавливаем git, если ещё не установлен..."
+apt-get update && apt-get install -y git python3 python3-pip
 
-# Перемещение файлов в корень
+# === Остановка старого сервиса ===
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+  echo "🔄 Останавливаем текущую службу..."
+  systemctl stop "$SERVICE_NAME"
+fi
+
+# === Создание директории ===
+echo "📁 Создаём директорию проекта: $PROJECT_DIR"
+mkdir -p "$PROJECT_DIR"
+cd "$PROJECT_DIR"
+
+# === Клонирование репозитория ===
+echo "📥 Клонируем репозиторий с GitHub..."
+rm -rf .git  # очищаем, если уже был клонирован
+git clone "$REPO_URL" temp_repo
 mv temp_repo/* temp_repo/.* . 2>/dev/null || true
 rmdir temp_repo
 
-echo "🔋 Создание виртуального окружения..."
+# === Виртуальное окружение ===
+echo "🔋 Создаём виртуальное окружение..."
+rm -rf .venv
 python3 -m venv .venv
 source .venv/bin/activate
 
-echo "📦 Установка зависимостей..."
+# === Установка зависимостей ===
+echo "📦 Устанавливаем зависимости..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-echo "⚙️ Настройка переменных окружения..."
-if [ ! -f ".env" ]; then
-    cp .env.example .env
-    echo "✅ Файл .env создан. Заполните TELEGRAM_TOKEN и TRAVELPAYOUTS_TOKEN."
+# === .env файл ===
+if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+  echo "⚙️ Создан .env из .env.example"
+  cp .env.example .env
+  echo "✅ Отредактируйте его: nano .env"
 fi
 
-echo "📂 Создание папки для логов..."
+# === Логи ===
 mkdir -p logs
 
-echo " systemd: создание службы..."
-sudo tee /etc/systemd/system/avia-ticket-search-bot.service > /dev/null << EOF
+# === Системная служба ===
+echo "🔧 Настраиваем systemd службу..."
+cat > /etc/systemd/system/$SERVICE_NAME.service << EOF
 [Unit]
 Description=AviaTicketSearchBot - Telegram-бот для поиска авиабилетов
 After=network.target
 
 [Service]
 Type=simple
-User=$USER
-WorkingDirectory=/opt/Bots/AviaTicketSearchBot
-Environment="PATH=/opt/Bots/AviaTicketSearchBot/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/opt/Bots/AviaTicketSearchBot/.venv/bin/python /opt/Bots/AviaTicketSearchBot/main.py
+User=root
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$PROJECT_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$PROJECT_DIR/.venv/bin/python $PROJECT_DIR/main.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -54,27 +79,19 @@ SyslogIdentifier=avia-ticket-search-bot
 WantedBy=multi-user.target
 EOF
 
-echo "✅ Служба создана: /etc/systemd/system/avia-ticket-search-bot.service"
+# === Перезагрузка systemd ===
+echo "🔄 Перезагружаем systemd..."
+systemctl daemon-reload
 
-echo "🔄 Перезагрузка systemd..."
-sudo systemctl daemon-reload
+# === Запуск ===
+echo "🚀 Включаем и запускаем службу..."
+systemctl enable "$SERVICE_NAME" --now
 
-echo "🚀 Включение и запуск службы..."
-sudo systemctl enable avia-ticket-search-bot
-sudo systemctl start avia-ticket-search-bot
-
+# === Готово ===
 echo "✅ Установка завершена!"
-
 echo ""
-echo "📌 Дальнейшие шаги:"
-echo "1. Отредактируйте .env:"
-echo "   nano /opt/Bots/AviaTicketSearchBot/.env"
-echo "2. Перезапустите бота после настройки:"
-echo "   sudo systemctl restart avia-ticket-search-bot"
-echo "3. Проверьте статус:"
-echo "   sudo systemctl status avia-ticket-search-bot"
-echo "4. Просмотр логов:"
-echo "   journalctl -u avia-ticket-search-bot -f"
-
-echo ""
-echo "💡 Бот будет автоматически перезапускаться при сбоях."
+echo "📌 Что дальше:"
+echo "1. Заполните .env:   nano $PROJECT_DIR/.env"
+echo "2. Перезапустите:    sudo systemctl restart $SERVICE_NAME"
+echo "3. Проверьте статус: sudo systemctl status $SERVICE_NAME"
+echo "4. Логи:             journalctl -u $SERVICE_NAME -f"
