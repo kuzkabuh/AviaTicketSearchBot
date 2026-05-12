@@ -1,10 +1,10 @@
 import logging
 import asyncio
-import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command
+from aiogram.types import Message
 from config import BOT_TOKEN
-from commands import get_handlers
-# Удалить импорт handlers, так как он больше не нужен
+from commands import start, track, list_subscriptions, help_command, support
 
 # Настройка логирования
 logging.basicConfig(
@@ -19,23 +19,23 @@ async def main():
     # 1. Проверка наличия токена внутри функции
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN не найден в конфигурации! Проверьте файл config.py или .env")
-        return # Теперь return находится внутри функции, что допустимо
+        return
 
-    # 2. Создание приложения
-    # Используем современный метод run_polling для упрощения жизненного цикла
-    application = Application.builder().token(BOT_TOKEN).build()
+    # 2. Создание бота и диспетчера
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher()
     
-    # 3. Регистрация обработчиков
-    # Получаем список хендлеров из файла commands.py
-    handlers = get_handlers()
-    for handler in handlers:
-        application.add_handler(handler)
+    # 3. Регистрация обработчиков команд
+    dp.message.register(start, Command("start"))
+    dp.message.register(track, Command("track"))
+    dp.message.register(list_subscriptions, Command("list"))
+    dp.message.register(help_command, Command("help"))
+    dp.message.register(support, Command("support"))
     
     logger.info("Бот инициализирован и готов к работе...")
 
     # 4. Запуск бота
-    # Метод run_polling автоматически обрабатывает старт, стоп и ожидание сигналов (Ctrl+C)
-    await application.run_polling()
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
     try:

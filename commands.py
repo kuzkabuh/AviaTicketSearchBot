@@ -1,5 +1,7 @@
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from aiogram import types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message
+from aiogram import ContextTypes
 from database import DatabaseManager
 from analytics import AnalyticsTracker
 from utils import parse_utm_params, extract_referral_id
@@ -42,7 +44,7 @@ async def get_flight_options(origin_code: str, dest_code: str, date: str, passen
         }
     ]
 
-async def send_flight_messages(update, flights, o_code, d_code, o_name, d_name, date, passengers, direction, is_return, return_date):
+async def send_flight_messages(message: Message, flights, o_code, d_code, o_name, d_name, date, passengers, direction, is_return, return_date):
     # Заглушка — отправка сообщений с результатами
     for flight in flights:
         price = flight.get("price")
@@ -59,26 +61,26 @@ async def send_flight_messages(update, flights, o_code, d_code, o_name, d_name, 
             f"💰 {price} ₽\n"
             f"🔗 [Купить билет]({link})"
         )
-        await update.message.reply_text(res_msg, parse_mode="Markdown")
+        await message.answer(res_msg, parse_mode="Markdown")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(message: Message, bot: types.Bot) -> None:
     """Приветствие и обработка реферальных ссылок."""
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = update.effective_user.first_name
-    last_name = update.effective_user.last_name
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
+    last_name = message.from_user.last_name
     
     # Регистрация пользователя
     db_manager.register_user(user_id, username, first_name, last_name)
     
     # Обработка реферальной ссылки
-    if context.args:
+    if message.text and " " in message.text:
         try:
-            referrer_id = int(context.args[0])
+            referrer_id = int(message.text.split()[1])
             if referrer_id != user_id:
                 success = db_manager.add_referral(user_id, referrer_id)
                 if success:
-                    await context.bot.send_message(
+                    await bot.send_message(
                         chat_id=referrer_id,
                         text=f"🎉 Пользователь {first_name} перешел по вашей реферальной ссылке!"
                     )
@@ -92,7 +94,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
     
     # Отслеживание события старта
-    utm_params = parse_utm_params(update.message.text if update.message else "")
+    utm_params = parse_utm_params(message.text if message.text else "")
     analytics_tracker.track_event(
         "start_command", 
         user_id=user_id, 
@@ -101,7 +103,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         utm_campaign=utm_params.get('utm_campaign')
     )
     
-    await update.message.reply_text(
+    await message.answer(
         "✈️ **Бот-поисковик авиабилетов v5.0 (коммерческая версия)**\n\n"
         "🔍 Ищите билеты и получайте уведомления при снижении цены!\n\n"
         "📌 Команда:\n"
@@ -112,14 +114,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="Markdown"
     )
 
-async def track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def track(message: Message, bot: types.Bot) -> None:
     """Основная логика поиска."""
     # Отслеживание события поиска
-    analytics_tracker.track_event("track_command", user_id=update.effective_user.id)
+    analytics_tracker.track_event("track_command", user_id=message.from_user.id)
     
-    args = context.args
+    args = message.text.split()[1:] if message.text else []
     if len(args) < 3:
-        await update.message.reply_text(
+        await message.answer(
             "❌ Неверный формат.\nИспользуйте:\n`/track Москва Казань 2026-05-27 [2026-05-29] 2`",
             parse_mode="Markdown"
         )
@@ -140,63 +142,63 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             passengers = int(args[4])
 
         if not (1 <= passengers <= 9):
-            await update.message.reply_text("❌ Кол-во пассажиров: от 1 до 9.")
+            await message.answer("❌ Кол-во пассажиров: от 1 до 9.")
             return
 
     except Exception:
-        await update.message.reply_text("❌ Ошибка в датах или числе пассажиров.")
+        await message.answer("❌ Ошибка в датах или числе пассажиров.")
         return
 
     o_code, o_name = await get_city_code(raw_origin)
     d_code, d_name = await get_city_code(raw_dest)
 
     if not o_code or not d_code:
-        await update.message.reply_text("❌ Город не найден. Попробуйте другое название.")
+        await message.answer("❌ Город не найден. Попробуйте другое название.")
         return
 
     # Поиск туда
-    await update.message.reply_text(f"🔍 Ищу рейсы: {o_name} → {d_name}...")
+    await message.answer(f"🔍 Ищу рейсы: {o_name} → {d_name}...")
     flights_to = await get_flight_options(o_code, d_code, dep_date, passengers)
     await send_flight_messages(
-        update, flights_to, o_code, d_code, o_name, d_name,
+        message, flights_to, o_code, d_code, o_name, d_name,
         dep_date, passengers, "ТУДА 🛫", is_return=False, return_date=ret_date
     )
 
     # Обратно
     if ret_date:
         await asyncio.sleep(1)
-        await update.message.reply_text(f"🔍 Ищу обратные рейсы: {d_name} → {o_name}...")
+        await message.answer(f"🔍 Ищу обратные рейсы: {d_name} → {o_name}...")
         flights_back = await get_flight_options(d_code, o_code, ret_date, passengers)
         await send_flight_messages(
-            update, flights_back, d_code, o_code, d_name, o_name,
+            message, flights_back, d_code, o_code, d_name, o_name,
             ret_date, passengers, "ОБРАТНО 🛬", is_return=True, return_date=ret_date
         )
 
-async def list_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def list_subscriptions(message: Message, bot: types.Bot) -> None:
     """Список подписок."""
     # Отслеживание события просмотра подписок
-    analytics_tracker.track_event("list_subscriptions", user_id=update.effective_user.id)
+    analytics_tracker.track_event("list_subscriptions", user_id=message.from_user.id)
     
-    subs = db_manager.get_user_subscriptions(update.effective_chat.id)
+    subs = db_manager.get_user_subscriptions(message.chat.id)
 
     if not subs:
-        await update.message.reply_text("📭 У вас нет активных подписок.")
+        await message.answer("📭 У вас нет активных подписок.")
         return
 
     for s in subs:
         sid, oname, dname, dep, ret, price = s
         dates = f"📅 {dep}" + (f" → {ret}" if ret else "")
         btn = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Удалить", callback_data=f"del|{sid}")]])
-        await update.message.reply_text(
+        await message.answer(
             f"📍 {oname} → {d_name}\n{dates}\n💰 Порог: {price} ₽",
             reply_markup=btn
         )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(message: Message, bot: types.Bot) -> None:
     """Обработка команды /help."""
-    analytics_tracker.track_event("help_command", user_id=update.effective_user.id)
+    analytics_tracker.track_event("help_command", user_id=message.from_user.id)
     
-    await update.message.reply_text(
+    await message.answer(
         "ℹ️ **Помощь по боту**\n\n"
         "✈️ Бот помогает находить дешевые авиабилеты и отслеживать их цены.\n\n"
         "📌 Основные команды:\n"
@@ -212,24 +214,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode="Markdown"
     )
 
-async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def support(message: Message, bot: types.Bot) -> None:
     """Обработка команды /support."""
-    analytics_tracker.track_event("support_command", user_id=update.effective_user.id)
+    analytics_tracker.track_event("support_command", user_id=message.from_user.id)
     
-    await update.message.reply_text(
+    await message.answer(
         "📞 **Служба поддержки**\n\n"
         "Если у вас возникли вопросы или проблемы с ботом, напишите нам: @aviabot_support\n\n"
         "Мы ответим в течение 24 часов.\n\n"
         "💡 Вы также можете задать вопрос в нашем канале: @aviabot_channel",
         parse_mode="Markdown"
     )
-
-# Обработчики для регистрации в основном приложении
-def get_handlers():
-    return [
-        CommandHandler('start', start),
-        CommandHandler('track', track),
-        CommandHandler('list', list_subscriptions),
-        CommandHandler('help', help_command),
-        CommandHandler('support', support)
-    ]
