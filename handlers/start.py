@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from keyboards import start_search_keyboard
 from states import PopularDirectionState, TicketSearchState
+from utils.admin_access import is_admin
 
 router = Router(name="start")
 
@@ -27,7 +28,10 @@ WELCOME_TEXT = (
 async def start_command(message: Message, state: FSMContext) -> None:
     """Показывает приветствие и сбрасывает незавершенный FSM-сценарий."""
     await state.clear()
-    await message.answer(WELCOME_TEXT, reply_markup=start_search_keyboard())
+    await message.answer(
+        WELCOME_TEXT,
+        reply_markup=start_search_keyboard(is_admin=is_admin(message.from_user.id)),
+    )
 
 
 @router.message(Command("help"))

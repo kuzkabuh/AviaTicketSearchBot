@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from api import close_api_session
 from config import settings
 import db
-from handlers import search, start, subscriptions
+from handlers import admin, search, start, subscriptions
 from services.price_tracking import PriceTrackingService
 
 
@@ -29,12 +29,14 @@ async def main() -> None:
     dispatcher = Dispatcher(storage=MemoryStorage())
     price_tracking = PriceTrackingService(bot)
 
+    dispatcher.include_router(admin.router)
     dispatcher.include_router(start.router)
     dispatcher.include_router(search.router)
     dispatcher.include_router(subscriptions.router)
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        await admin.notify_update_result_on_start(bot)
         price_tracking.start()
         logger.info("Bot polling started")
         await dispatcher.start_polling(bot)
