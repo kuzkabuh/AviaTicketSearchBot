@@ -84,6 +84,7 @@ handlers/search.py                # FSM поиска, выбор локаций,
 handlers/subscriptions.py         # создание, просмотр, ручная проверка и удаление подписок
 services/locations.py             # справочник и поиск городов/аэропортов
 services/tickets.py               # поиск билетов и сопоставление рейса подписки
+services/calendar_prices.py       # календарные цены рядом с выбранной датой
 services/subscriptions.py         # бизнес-логика подписок и проверки цены
 services/price_tracking.py        # фоновая периодическая проверка цен
 states/search_states.py           # состояния TicketSearchState и PopularDirectionState

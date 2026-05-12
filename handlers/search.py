@@ -25,6 +25,7 @@ router = Router(name="search")
 # Короткий in-memory cache нужен только для callback кнопки "Отслеживать цену".
 # Постоянные данные подписки сохраняются в SQLite после нажатия пользователем.
 OFFER_CACHE: dict[str, dict[str, Any]] = {}
+CALENDAR_CONTEXT_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _cache_offer(user_id: int, offer: dict[str, Any], passengers: int) -> str:
@@ -32,6 +33,38 @@ def _cache_offer(user_id: int, offer: dict[str, Any], passengers: int) -> str:
     token = uuid4().hex[:16]
     OFFER_CACHE[token] = {"user_id": user_id, "offer": offer, "passengers": passengers}
     return token
+
+
+def _cache_calendar_context(
+    user_id: int,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    passengers: int,
+    *,
+    trip_type: str,
+    return_date: str | None,
+) -> str:
+    """Сохраняет контекст последнего поиска для просмотра цен рядом с датой."""
+    token = uuid4().hex[:16]
+    CALENDAR_CONTEXT_CACHE[token] = {
+        "user_id": user_id,
+        "origin": origin,
+        "destination": destination,
+        "departure_date": departure_date,
+        "trip_type": trip_type,
+        "return_date": return_date,
+        "passengers": passengers,
+    }
+    return token
+
+
+def _get_calendar_context(token: str, user_id: int) -> dict[str, Any] | None:
+    """Возвращает сохраненный контекст календаря, если он принадлежит пользователю."""
+    cached = CALENDAR_CONTEXT_CACHE.get(token)
+    if not cached or cached.get("user_id") != user_id:
+        return None
+    return cached
 
 
 def get_cached_offer(token: str, user_id: int) -> dict[str, Any] | None:
@@ -163,6 +196,67 @@ async def _send_offers(
             disable_web_page_preview=True,
             reply_markup=offer_subscribe_keyboard(token),
         )
+
+    calendar_token = _cache_calendar_context(
+        message.from_user.id,
+        origin,
+        destination,
+        departure_date,
+        passengers,
+        trip_type=trip_type,
+        return_date=return_date,
+    )
+    await message.answer(
+        "Хотите посмотреть цены рядом с выбранной датой?",
+        reply_markup=nearby_dates_keyboard(calendar_token),
+    )
+
+
+@router.callback_query(F.data.startswith("calendar:skip:"))
+async def skip_nearby_calendar(callback: CallbackQuery) -> None:
+    """Закрывает предложение посмотреть цены на соседние даты."""
+    await callback.message.edit_text("Хорошо, не показываю цены на соседние даты.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("calendar:nearby:"))
+async def show_nearby_calendar(callback: CallbackQuery) -> None:
+    """Показывает календарные цены в диапазоне ±3 дня от выбранной даты."""
+    token = (callback.data or "").split(":")[-1]
+    user_id = callback.from_user.id if callback.from_user else 0
+    context = _get_calendar_context(token, user_id)
+    if not context:
+        await callback.answer("Контекст поиска устарел. Запустите поиск заново.", show_alert=True)
+        return
+
+    await callback.message.edit_text("📅 Ищу цены на даты ±3 дня...")
+    prices = await get_nearby_calendar_prices(
+        context["origin"],
+        context["destination"],
+        context["departure_date"],
+        days=3,
+    )
+
+    if not prices:
+        await callback.message.answer(
+            "😔 По календарю цен нет данных для дат ±3 дня от выбранной даты. "
+            "Попробуйте другой маршрут или дату."
+        )
+        await callback.answer()
+        return
+
+    await callback.message.answer(
+        format_nearby_calendar_prices(
+            prices,
+            origin=context["origin"],
+            destination=context["destination"],
+            departure_date=context["departure_date"],
+            trip_type=context.get("trip_type", "one_way"),
+            return_date=context.get("return_date"),
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.message(Command("search"))

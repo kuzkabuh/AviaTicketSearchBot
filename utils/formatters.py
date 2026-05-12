@@ -160,3 +160,46 @@ def format_price_change(subscription: dict[str, Any], old_price: float, new_pric
         f"{delta_label}: {escape(sign_delta)} {('₽' if currency.upper() in {'RUB', 'RUR'} else currency.upper())}\n\n"
         f"🔗 <a href=\"{escape(link, quote=True)}\">Открыть билет</a>"
     )
+
+
+def format_nearby_calendar_prices(
+    prices: list[dict[str, Any]],
+    *,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> str:
+    """Форматирует календарные цены для дат ±3 дня."""
+    trip_type_label = "Туда и обратно" if trip_type == "round_trip" else "В одну сторону"
+    lowest_price = min(
+        (item.get("price") for item in prices if isinstance(item.get("price"), (int, float))),
+        default=None,
+    )
+
+    lines = [
+        "📅 <b>Цены рядом с выбранной датой</b>",
+        "",
+        f"<b>Маршрут:</b> {escape(origin)} → {escape(destination)}",
+        f"<b>Тип поездки:</b> {trip_type_label}",
+        f"<b>Выбранная дата вылета:</b> {escape(departure_date)}",
+    ]
+    if trip_type == "round_trip" and return_date:
+        lines.append(f"<b>Дата возвращения:</b> {escape(return_date)}")
+    lines.append("")
+
+    for item in prices:
+        price = item.get("price")
+        currency = item.get("currency") or "RUB"
+        date_value = str(item.get("date") or "—")
+        markers = []
+        if date_value == departure_date:
+            markers.append("выбранная дата")
+        if lowest_price is not None and price == lowest_price:
+            markers.append("самая низкая цена")
+
+        marker_text = f" — {'; '.join(markers)}" if markers else ""
+        lines.append(f"• {escape(date_value)} — {format_money(price, currency)}{marker_text}")
+
+    return "\n".join(lines)
