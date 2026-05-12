@@ -37,7 +37,7 @@ class Settings:
     admin_telegram_ids: tuple[int, ...] = ()
     bot_project_dir: str = str(Path(__file__).resolve().parent)
     bot_git_branch: str = "master"
-    bot_service_name: str = "avia-ticket-bot.service"
+    bot_service_name: str = "avia-ticket-search-bot.service"
     bot_update_script: str = str(Path(__file__).resolve().parent / "update.sh")
     bot_update_log_path: str = str(Path(__file__).resolve().parent / "logs" / "update.log")
     bot_update_lock_path: str = str(Path(__file__).resolve().parent / "runtime" / "update.lock")
@@ -140,7 +140,7 @@ settings = Settings(
     admin_telegram_ids=_get_int_tuple_env("ADMIN_IDS", "ADMIN_TELEGRAM_IDS"),
     bot_project_dir=_get_env("BOT_PROJECT_DIR", default=str(Path(__file__).resolve().parent)),
     bot_git_branch=_get_env("BOT_GIT_BRANCH", default="master"),
-    bot_service_name=_get_env("BOT_SERVICE_NAME", default="avia-ticket-bot.service"),
+    bot_service_name=_get_env("BOT_SERVICE_NAME", default="avia-ticket-search-bot.service"),
     bot_update_script=_get_env(
         "BOT_UPDATE_SCRIPT",
         default=str(Path(__file__).resolve().parent / "update.sh"),
