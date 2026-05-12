@@ -1,273 +1,59 @@
-# AviaTicketSearchBot - Telegram-бот для поиска авиабилетов
+# AviaTicketSearchBot
 
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+Асинхронный Telegram-бот для поиска авиабилетов через реальные эндпоинты Aviasales / Travelpayouts API.
 
-Telegram-бот для поиска авиабилетов с функцией отслеживания цен, аналитикой и автоматическим обновлением. Бот позволяет пользователям искать авиабилеты, получать уведомления при снижении цен и использовать реферальную систему.
+## Что внутри
 
-## Установка через скрипт
+- `aiogram 3.x` и `Router` для команд и сообщений.
+- FSM (`FSMContext`) вместо `telebot.register_next_step_handler`.
+- `aiohttp` вместо `requests` для всех HTTP-запросов к Travelpayouts.
+- Реальные эндпоинты:
+  - `/v1/prices/cheap` — поиск дешевых билетов;
+  - `/v1/city-directions` — популярные направления;
+  - `/v2/prices/calendar` — календарь цен.
+- Inline-кнопки через `InlineKeyboardBuilder`.
 
-Вы можете автоматически установить и настроить бота с помощью скрипта `install.sh`. Скрипт выполнит:
-- Клонирование репозитория (ветка `master`)
-- Создание виртуального окружения
-- Установку зависимостей
-- Создание `.env` файла на основе шаблона
-- Регистрация systemd-службы для автозапуска
-
-### Запуск установки
-
-```bash
-curl -s https://raw.githubusercontent.com/kuzkabuh/AviaTicketSearchBot/master/install.sh | bash
-```
-
-или
+## Быстрый старт
 
 ```bash
-wget -q https://raw.githubusercontent.com/kuzkabuh/AviaTicketSearchBot/master/install.sh -O install.sh && bash install.sh
-```
-
-После установки:
-1. Отредактируйте `.env` файл: `sudo nano /opt/Bots/AviaTicketSearchBot/.env`
-2. Заполните `TELEGRAM_TOKEN` и `TRAVELPAYOUTS_TOKEN`
-3. Перезапустите бота: `sudo systemctl restart avia-ticket-search-bot`
-
-> Скрипт `install.sh` автоматически настраивает службу systemd. Полный пример:
-> ```bash
-> #!/bin/bash
-> 
-> echo "🚀 Установка AviaTicketSearchBot в /opt/Bots/AviaTicketSearchBot..."
-> 
-> echo "📁 Создание системной директории..."
-> sudo mkdir -p /opt/Bots/AviaTicketSearchBot
-> sudo chown $USER:$USER /opt/Bots/AviaTicketSearchBot
-> 
-> echo "📦 Клонирование репозитория (ветка master)..."
-> cd /opt/Bots/AviaTicketSearchBot
-> 
-> git clone -b master https://github.com/kuzkabuh/AviaTicketSearchBot.git temp_repo
-> 
-> # Перемещение файлов в корень
-> mv temp_repo/* temp_repo/.* . 2>/dev/null || true
-> rmdir temp_repo
-> 
-> echo "🔋 Создание виртуального окружения..."
-> python3 -m venv .venv
-> source .venv/bin/activate
-> 
-> echo "📦 Установка зависимостей..."
-> pip install --upgrade pip
-> pip install -r requirements.txt
-> 
-> echo "⚙️ Настройка переменных окружения..."
-> if [ ! -f ".env" ]; then
->     cp .env.example .env
->     echo "✅ Файл .env создан. Заполните TELEGRAM_TOKEN и TRAVELPAYOUTS_TOKEN."
-> fi
-> 
-> echo "📂 Создание папки для логов..."
-> mkdir -p logs
-> 
-> echo " systemd: создание службы..."
-> sudo tee /etc/systemd/system/avia-ticket-search-bot.service > /dev/null << EOF
-> [Unit]
-> Description=AviaTicketSearchBot - Telegram-бот для поиска авиабилетов
-> After=network.target
-> 
-> [Service]
-> Type=simple
-> User=$USER
-> WorkingDirectory=/opt/Bots/AviaTicketSearchBot
-> Environment="PATH=/opt/Bots/AviaTicketSearchBot/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-> ExecStart=/opt/Bots/AviaTicketSearchBot/.venv/bin/python /opt/Bots/AviaTicketSearchBot/main.py
-> Restart=always
-> RestartSec=5
-> StandardOutput=journal
-> StandardError=journal
-> SyslogIdentifier=avia-ticket-search-bot
-> 
-> [Install]
-> WantedBy=multi-user.target
-> EOF
-> 
-> echo "✅ Служба создана: /etc/systemd/system/avia-ticket-search-bot.service"
-> 
-> echo "🔄 Перезагрузка systemd..."
-> sudo systemctl daemon-reload
-> 
-> echo "🚀 Включение и запуск службы..."
-> sudo systemctl enable avia-ticket-search-bot
-> sudo systemctl start avia-ticket-search-bot
-> 
-> echo "✅ Установка завершена!"
-> ```
-
-## Основные функции
-
-- **Поиск авиабилетов** - быстрый поиск рейсов через API Aviasales
-- **Отслеживание цен** - уведомления при снижении цены на выбранный маршрут
-- **Аналитика** - сбор данных о пользователях, UTM-метках и поведении
-- **Реферальная система** - возможность приглашать друзей и получать бонусы
-- **Автоматическое обновление** - бот сам проверяет обновления и предлагает установить
-- **Мониторинг** - интеграция с Sentry для отслеживания ошибок
-
-## Установка и запуск
-
-### Предварительные требования
-- Python 3.8 или выше
-- Git
-- Аккаунт Telegram
-- API-ключи:
-  - `TELEGRAM_TOKEN` - токен бота от @BotFather
-  - `TRAVELPAYOUTS_TOKEN` - токен для доступа к API Aviasales
-
-### Установка зависимостей
-
-```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
-### Настройка окружения
-
-Создайте файл `.env` в корне проекта:
+Заполните `.env`:
 
 ```env
-TELEGRAM_TOKEN=ваш_telegram_токен
+BOT_TOKEN=ваш_telegram_токен
 TRAVELPAYOUTS_TOKEN=ваш_travelpayouts_токен
-MARKER=721904
-SENTRY_DSN=https://ваш-sentry-dsn
-DATABASE_URL=sqlite:///flights_bot.db
+MARKER=ваш_маркер_если_есть
+CURRENCY=rub
 ```
 
-### Запуск бота
+Запуск:
 
 ```bash
 python main.py
 ```
 
-## Функциональность
+## Команды
 
-### Команды
+- `/start` — приветствие и кнопки быстрого запуска.
+- `/help` — справка по формату ввода.
+- `/search` — пошаговый поиск билетов: откуда → куда → дата.
+- `/popular` — популярные направления из выбранного города.
+- `/cancel` — отмена текущего FSM-сценария.
 
-- `/start` - начать работу с ботом, получить реферальную ссылку
-- `/track [Откуда] [Куда] [Дата_Туда] [Дата_Обратно] [Пассажиры]` - поиск и отслеживание билетов
-- `/list` - просмотр активных подписок
-- `/help` - помощь по использованию бота
-- `/support` - связь со службой поддержки
-- `/update` - проверка наличия обновлений
+## Структура
 
-### Реферальная система
-
-При регистрации пользователь получает уникальную ссылку вида:
+```text
+config.py                  # чтение переменных окружения
+api.py                     # aiohttp-клиент Travelpayouts
+main.py                    # Bot, Dispatcher, подключение Router-ов
+handlers/start.py          # /start, /help, /cancel и кнопки меню
+handlers/search.py         # FSM поиска и популярных направлений
+states/search_states.py    # состояния TicketSearchState и PopularDirectionState
+keyboards/inline.py        # InlineKeyboardBuilder-клавиатуры
+utils/validators.py        # проверка IATA-кодов и дат
 ```
-https://t.me/avia_search_bot?start=USER_ID
-```
-
-Когда новый пользователь переходит по ссылке, пригласивший получает уведомление. Система отслеживает всех рефералов и их действия.
-
-### Аналитика
-
-Бот собирает следующие данные:
-- Количество вызовов команд (`/start`, `/track`, `/help` и др.)
-- Количество созданных и удаленных подписок
-- Переходы по ссылкам на покупку
-- UTM-метки из ссылок
-- Реферальные переходы
-
-Данные хранятся в базе данных и могут быть проанализированы для улучшения сервиса.
-
-### Автоматическое обновление
-
-Бот автоматически проверяет наличие обновлений в репозитории каждые 6 часов. При обнаружении новой версии администратор по��учает уведомление с кнопкой "Обновить". Нажатие кнопки запускает процесс обновления.
-
-## Архитектура
-
-Проект разделен на несколько модулей:
-
-- `main.py` - основной файл запуска бота
-- `models.py` - модели SQLAlchemy для базы данных
-- `db_manager.py` - менеджер базы данных с использованием SQLAlchemy
-- `updater.py` - система автоматического обновления из Git-репозитория
-- `commands.py` - обработчики команд бота
-- `handlers.py` - обработчики кнопок и сообщений
-- `analytics.py` - система сбора аналитики
-- `utils.py` - вспомогательные функции
-- `logging_config.py` - настройка логирования
-
-## Конфигурация базы данных
-
-Бот использует SQLite с SQLAlchemy ORM. Создаются следующие таблицы:
-
-- `users` - информация о пользователях
-- `subscriptions` - подписки на отслеживание цен
-- `analytics_events` - события аналитики
-- `bot_versions` - информация о версиях бота
-
-## Мониторинг и логирование
-
-### Sentry
-
-Для отслеживания ошибок используется Sentry. При возникновении исключения стек-трейс отправляется в Sentry, если задан `SENTRY_DSN`.
-
-### Логирование
-
-Логи записываются в файл `logs/bot.log` с ротацией (5 файлов по 5 МБ). Формат логов включает время, уровень, модуль и сообщение.
-
-## Переменные окружения
-
-| Переменная | Описание | Обязательная |
-|------------|---------|-------------|
-| `TELEGRAM_TOKEN` | Токен бота от @BotFather | Да |
-| `TRAVELPAYOUTS_TOKEN` | Токен для API Aviasales | Да |
-| `MARKER` | Идентификатор партнера для Aviasales | Нет (по умолчанию 721904) |
-| `SENTRY_DSN` | DSN для Sentry | Нет |
-| `DATABASE_URL` | URL базы данных | Нет (по умолчанию SQLite) |
-
-## Разработка
-
-### Запуск в режиме разработки
-
-```bash
-python main.py
-```
-
-### Запуск тестов
-
-```bash
-tox
-```
-
-### Форматирование кода
-
-```bash
-black .
-```
-
-## Деплой
-
-Бот может быть развернут на любом сервере с Python. Рекомендуется использовать systemd для управления процессом:
-
-```ini
-[Unit]
-Description=AviaTicketSearchBot
-After=network.target
-
-[Service]
-Type=simple
-User=bot
-WorkingDirectory=/path/to/bot
-ExecStart=/path/to/venv/bin/python main.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Лицензия
-
-Этот проект лицензирован по MIT License - подробности в файле [LICENSE](LICENSE).
-
-## Контакты
-
-По вопросам сотрудничества и поддержки:
-- Email: support@aviabot.example.com
-- Telegram: @aviabot_support
