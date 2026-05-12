@@ -1,8 +1,10 @@
 import logging
 import asyncio
-from telegram.ext import Application
+import logging
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from config import BOT_TOKEN
 from commands import get_handlers
+# Удалить импорт handlers, так как он больше не нужен
 
 # Настройка логирования
 logging.basicConfig(
