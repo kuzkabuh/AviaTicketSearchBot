@@ -22,3 +22,10 @@ class PopularDirectionState(StatesGroup):
     waiting_origin = State()
     choosing_origin = State()
     waiting_choice = State()
+
+
+class AdminBroadcastState(StatesGroup):
+    """Состояния безопасной административной рассылки."""
+
+    waiting_text = State()
+    waiting_confirmation = State()

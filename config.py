@@ -27,6 +27,7 @@ class Settings:
     marker: str = ""
     request_timeout: int = 15
     database_path: str = "avia_bot.sqlite3"
+    log_level: str = "INFO"
     ticket_results_limit: int = 5
     min_ticket_results: int = 5
     price_tracking_enabled: bool = True
@@ -97,6 +98,18 @@ def _get_int_tuple_env(*names: str) -> tuple[int, ...]:
     return tuple(values)
 
 
+def _normalize_database_path(raw_value: str) -> str:
+    """Возвращает путь SQLite из DATABASE_PATH/DATABASE_URL.
+
+    Поддерживаются обычные пути и URL вида ``sqlite:///path/to/db.sqlite3``.
+    """
+    if raw_value.startswith("sqlite:///"):
+        return raw_value.removeprefix("sqlite:///")
+    if raw_value.startswith("sqlite://"):
+        return raw_value.removeprefix("sqlite://")
+    return raw_value
+
+
 def _get_bool_env(*names: str, default: bool) -> bool:
     """Безопасно читает булеву настройку из .env."""
     raw_value = _get_env(*names, default="true" if default else "false").lower()
@@ -110,7 +123,8 @@ settings = Settings(
     currency=_get_env("CURRENCY", default="rub").lower(),
     marker=_get_env("MARKER"),
     request_timeout=_get_int_env("REQUEST_TIMEOUT", default=15),
-    database_path=_get_env("DATABASE_PATH", default="avia_bot.sqlite3"),
+    database_path=_normalize_database_path(_get_env("DATABASE_PATH", "DATABASE_URL", default="avia_bot.sqlite3")),
+    log_level=_get_env("LOG_LEVEL", default="INFO").upper(),
     ticket_results_limit=max(1, _get_int_env("TICKET_RESULTS_LIMIT", default=5)),
     min_ticket_results=max(1, _get_int_env("MIN_TICKET_RESULTS", default=5)),
     price_tracking_enabled=_get_bool_env("PRICE_TRACKING_ENABLED", default=True),
@@ -123,7 +137,7 @@ settings = Settings(
         1,
         _get_int_env("DUPLICATE_NOTIFICATION_COOLDOWN_MINUTES", default=30),
     ),
-    admin_telegram_ids=_get_int_tuple_env("ADMIN_TELEGRAM_IDS"),
+    admin_telegram_ids=_get_int_tuple_env("ADMIN_IDS", "ADMIN_TELEGRAM_IDS"),
     bot_project_dir=_get_env("BOT_PROJECT_DIR", default=str(Path(__file__).resolve().parent)),
     bot_git_branch=_get_env("BOT_GIT_BRANCH", default="master"),
     bot_service_name=_get_env("BOT_SERVICE_NAME", default="avia-ticket-bot.service"),

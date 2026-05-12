@@ -9,6 +9,7 @@ from typing import Any
 from aiogram import Bot
 
 import db
+from config import settings
 from services.tickets import find_matching_offer, search_ticket_offers
 from utils.formatters import format_price_change
 
@@ -40,6 +41,18 @@ async def delete_subscription(subscription_id: int, telegram_user_id: int) -> bo
     deleted = await db.mark_subscription_deleted(subscription_id, telegram_user_id)
     logger.info("Subscription delete subscription=%s user=%s deleted=%s", subscription_id, telegram_user_id, deleted)
     return deleted
+
+
+def _can_notify(subscription: dict[str, Any]) -> bool:
+    """Проверяет cooldown между повторными уведомлениями по одной подписке."""
+    last_notified_at = subscription.get("last_notified_at")
+    if not last_notified_at:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(last_notified_at)
+    except ValueError:
+        return True
+    return datetime.now(timezone.utc) - last_dt >= timedelta(minutes=settings.duplicate_notification_cooldown_minutes)
 
 
 async def check_subscription_price(subscription: dict[str, Any], bot: Bot | None = None, notify: bool = False) -> dict[str, Any]:
@@ -77,7 +90,7 @@ async def check_subscription_price(subscription: dict[str, Any], bot: Bot | None
     changed = old_price is not None and new_price != old_price
     if changed:
         update_fields["last_price"] = new_price
-        if notify and bot is not None:
+        if notify and bot is not None and _can_notify(subscription):
             try:
                 message_subscription = {**subscription, "purchase_link": match.get("link") or subscription.get("purchase_link")}
                 await bot.send_message(
