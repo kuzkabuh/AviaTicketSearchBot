@@ -8,9 +8,23 @@ from api import search_cheap_tickets
 from config import settings
 
 
-async def search_ticket_offers(origin: str, destination: str, date: str) -> list[dict[str, Any]]:
+async def search_ticket_offers(
+    origin: str,
+    destination: str,
+    date: str,
+    *,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> list[dict[str, Any]]:
     """Возвращает до настроенного лимита разных вариантов перелета."""
-    return await search_cheap_tickets(origin, destination, date, limit=settings.ticket_results_limit)
+    return await search_cheap_tickets(
+        origin,
+        destination,
+        date,
+        limit=settings.ticket_results_limit,
+        trip_type=trip_type,
+        return_date=return_date,
+    )
 
 
 def find_matching_offer(subscription: dict[str, Any], offers: list[dict[str, Any]]) -> dict[str, Any] | None:

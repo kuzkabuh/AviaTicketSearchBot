@@ -16,6 +16,7 @@ from keyboards.inline import (
     popular_directions_keyboard,
     start_search_keyboard,
     subscriptions_keyboard,
+    trip_type_keyboard,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "popular_directions_keyboard",
     "start_search_keyboard",
     "subscriptions_keyboard",
+    "trip_type_keyboard",
 ]

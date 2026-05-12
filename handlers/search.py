@@ -10,15 +10,15 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from api import get_popular_directions
+from api import build_aviasales_search_link, get_popular_directions
 import db
 from config import settings
-from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard
+from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard, trip_type_keyboard
 from services.locations import Location, find_locations, get_location_by_code
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
 from utils.formatters import format_offer
-from utils.validators import parse_positive_int, validate_date
+from utils.validators import parse_positive_int, validate_date, validate_return_date
 
 router = Router(name="search")
 
@@ -76,16 +76,34 @@ async def _store_location_and_advance(target: Message | CallbackQuery, state: FS
         return
 
     await state.update_data(destination=location.code, destination_location=location.as_dict())
-    await state.set_state(TicketSearchState.waiting_date)
-    await message.answer("Введите дату вылета в формате YYYY-MM-DD, например 2026-06-15:")
+    await state.set_state(TicketSearchState.waiting_trip_type)
+    await message.answer("Выберите тип поездки:", reply_markup=trip_type_keyboard())
 
 
-async def _send_offers(message: Message, origin: str, destination: str, departure_date: str, passengers: int) -> None:
+async def _send_offers(
+    message: Message,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    passengers: int,
+    *,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> None:
     """Выполняет асинхронный поиск и отправляет пользователю найденные варианты."""
-    await message.answer(f"🔍 Ищу билеты {origin} → {destination} на {departure_date}. Количество билетов: {passengers}...")
-    await db.record_bot_event(message.from_user.id if message.from_user else None, "search_started", f"{origin}->{destination};date={departure_date}")
+    trip_label = "туда и обратно" if trip_type == "round_trip" else "в одну сторону"
+    return_part = f", возвращение: {return_date}" if trip_type == "round_trip" and return_date else ""
+    await message.answer(
+        f"🔍 Ищу билеты {origin} → {destination} на {departure_date}{return_part}. "
+        f"Тип поездки: {trip_label}. Количество билетов: {passengers}..."
+    )
+    await db.record_bot_event(
+        message.from_user.id if message.from_user else None,
+        "search_started",
+        f"{origin}->{destination};date={departure_date};trip_type={trip_type};return_date={return_date or ''}",
+    )
     try:
-        offers = await search_ticket_offers(origin, destination, departure_date)
+        offers = await search_ticket_offers(origin, destination, departure_date, trip_type=trip_type, return_date=return_date)
     except Exception as error:  # noqa: BLE001 - пользователь получает понятную ошибку, детали уходят в лог
         await db.record_bot_event(message.from_user.id if message.from_user else None, "api_error", f"search {origin}->{destination}: {error}")
         await db.record_search_history(
@@ -120,9 +138,27 @@ async def _send_offers(message: Message, origin: str, destination: str, departur
     await db.record_bot_event(message.from_user.id if message.from_user else None, "search_success", f"{origin}->{destination};results={len(offers)}")
 
     for index, offer in enumerate(offers[: settings.ticket_results_limit], start=1):
-        token = _cache_offer(message.from_user.id, offer, passengers)
+        display_offer = dict(offer)
+        if trip_type == "round_trip":
+            display_offer["link"] = build_aviasales_search_link(
+                origin,
+                destination,
+                departure_date,
+                trip_type=trip_type,
+                return_date=return_date,
+                passengers=passengers,
+                marker=settings.marker,
+            )
+        token = _cache_offer(message.from_user.id, display_offer, passengers)
         await message.answer(
-            format_offer(offer, index, passengers),
+            format_offer(
+                display_offer,
+                index,
+                passengers,
+                trip_type=trip_type,
+                departure_date=departure_date,
+                return_date=return_date,
+            ),
             parse_mode="HTML",
             disable_web_page_preview=True,
             reply_markup=offer_subscribe_keyboard(token),
@@ -177,6 +213,26 @@ async def choose_destination(callback: CallbackQuery, state: FSMContext) -> None
     await callback.answer()
 
 
+@router.callback_query(TicketSearchState.waiting_trip_type, F.data.startswith("trip_type:"))
+async def choose_trip_type(callback: CallbackQuery, state: FSMContext) -> None:
+    """Сохраняет тип поездки и переводит пользователя к вводу даты вылета."""
+    trip_type = (callback.data or "").split(":")[-1]
+    if trip_type not in {"one_way", "round_trip"}:
+        await callback.answer("Не удалось выбрать тип поездки", show_alert=True)
+        return
+
+    await state.update_data(trip_type=trip_type)
+    await state.set_state(TicketSearchState.waiting_date)
+    await callback.message.answer("Введите дату вылета в формате YYYY-MM-DD, например 2026-06-15:")
+    await callback.answer()
+
+
+@router.message(TicketSearchState.waiting_trip_type)
+async def process_trip_type_text(message: Message) -> None:
+    """Напоминает пользователю выбрать тип поездки inline-кнопкой."""
+    await message.answer("Пожалуйста, выберите тип поездки кнопкой ниже:", reply_markup=trip_type_keyboard())
+
+
 @router.message(TicketSearchState.waiting_date)
 async def process_date(message: Message, state: FSMContext) -> None:
     """Проверяет дату и запрашивает количество билетов."""
@@ -187,6 +243,31 @@ async def process_date(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(departure_date=departure_date)
+
+    data = await state.get_data()
+    if data.get("trip_type") == "round_trip":
+        await state.set_state(TicketSearchState.waiting_return_date)
+        await message.answer("Введите дату возвращения в формате YYYY-MM-DD, например 2026-06-22:")
+        return
+
+    await state.set_state(TicketSearchState.waiting_passengers)
+    await message.answer("Сколько билетов нужно?")
+
+
+@router.message(TicketSearchState.waiting_return_date)
+async def process_return_date(message: Message, state: FSMContext) -> None:
+    """Проверяет дату возвращения для поездки туда и обратно."""
+    return_date = (message.text or "").strip()
+    data = await state.get_data()
+
+    if not validate_return_date(return_date, data.get("departure_date")):
+        await message.answer(
+            "❌ Неверная дата возвращения. Используйте формат YYYY-MM-DD; "
+            "дата возвращения должна быть позже даты вылета."
+        )
+        return
+
+    await state.update_data(return_date=return_date)
     await state.set_state(TicketSearchState.waiting_passengers)
     await message.answer("Сколько билетов нужно?")
 
@@ -200,7 +281,15 @@ async def process_passengers(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
-    await _send_offers(message, data["origin"], data["destination"], data["departure_date"], passengers)
+    await _send_offers(
+        message,
+        data["origin"],
+        data["destination"],
+        data["departure_date"],
+        passengers,
+        trip_type=data.get("trip_type", "one_way"),
+        return_date=data.get("return_date"),
+    )
     await state.clear()
 
 
