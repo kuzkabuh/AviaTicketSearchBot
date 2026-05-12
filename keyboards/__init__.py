@@ -1,6 +1,14 @@
 """Экспорт inline-клавиатур приложения."""
 
-from keyboards.admin import admin_panel_keyboard, update_confirmation_keyboard
+from keyboards.admin import (
+    admin_force_check_confirmation_keyboard,
+    admin_logs_keyboard,
+    admin_panel_keyboard,
+    admin_restart_confirmation_keyboard,
+    admin_stats_keyboard,
+    admin_users_keyboard,
+    update_confirmation_keyboard,
+)
 from keyboards.inline import (
     location_choice_keyboard,
     offer_subscribe_keyboard,
@@ -10,7 +18,12 @@ from keyboards.inline import (
 )
 
 __all__ = [
+    "admin_force_check_confirmation_keyboard",
+    "admin_logs_keyboard",
     "admin_panel_keyboard",
+    "admin_restart_confirmation_keyboard",
+    "admin_stats_keyboard",
+    "admin_users_keyboard",
     "update_confirmation_keyboard",
     "location_choice_keyboard",
     "offer_subscribe_keyboard",

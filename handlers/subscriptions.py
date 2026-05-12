@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from handlers.search import get_cached_offer
+import db
 from keyboards import subscriptions_keyboard
 from services.subscriptions import check_subscription_price, create_subscription, delete_subscription, get_user_subscriptions
 from utils.formatters import format_money, format_subscription_list
@@ -29,6 +30,8 @@ async def create_subscription_callback(callback: CallbackQuery) -> None:
         cached["offer"],
         cached["passengers"],
     )
+    if created:
+        await db.record_bot_event(callback.from_user.id, "subscription_created")
     if not created:
         await callback.answer("⚠️ Вы уже отслеживаете этот рейс.", show_alert=True)
         return
@@ -74,6 +77,7 @@ async def check_subscription_callback(callback: CallbackQuery) -> None:
         await callback.answer("Подписка не найдена", show_alert=True)
         return
 
+    await db.record_bot_event(callback.from_user.id, "manual_price_check", f"subscription={subscription_id}")
     result = await check_subscription_price(subscription, bot=callback.bot, notify=False)
     old_price = result.get("old_price")
     new_price = result.get("new_price")
@@ -106,5 +110,6 @@ async def delete_subscription_callback(callback: CallbackQuery) -> None:
         await callback.answer("Подписка не найдена", show_alert=True)
         return
 
+    await db.record_bot_event(callback.from_user.id, "subscription_deleted", f"subscription={subscription_id}")
     await callback.message.answer("✅ Подписка удалена.\nЯ больше не буду отслеживать этот рейс.")
     await callback.answer()

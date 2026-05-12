@@ -11,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from api import get_popular_directions
+import db
 from config import settings
 from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard
 from services.locations import Location, find_locations, get_location_by_code
@@ -82,14 +83,41 @@ async def _store_location_and_advance(target: Message | CallbackQuery, state: FS
 async def _send_offers(message: Message, origin: str, destination: str, departure_date: str, passengers: int) -> None:
     """Выполняет асинхронный поиск и отправляет пользователю найденные варианты."""
     await message.answer(f"🔍 Ищу билеты {origin} → {destination} на {departure_date}. Количество билетов: {passengers}...")
-    offers = await search_ticket_offers(origin, destination, departure_date)
+    await db.record_bot_event(message.from_user.id if message.from_user else None, "search_started", f"{origin}->{destination};date={departure_date}")
+    try:
+        offers = await search_ticket_offers(origin, destination, departure_date)
+    except Exception as error:  # noqa: BLE001 - пользователь получает понятную ошибку, детали уходят в лог
+        await db.record_bot_event(message.from_user.id if message.from_user else None, "api_error", f"search {origin}->{destination}: {error}")
+        await db.record_search_history(
+            message.from_user.id if message.from_user else None,
+            origin,
+            destination,
+            departure_date,
+            passengers,
+            0,
+            "api_error",
+        )
+        await message.answer("❌ Не удалось выполнить поиск из-за ошибки API. Попробуйте позже.")
+        return
+    await db.record_search_history(
+        message.from_user.id if message.from_user else None,
+        origin,
+        destination,
+        departure_date,
+        passengers,
+        len(offers),
+        "success" if offers else "no_results",
+    )
 
     if not offers:
+        await db.record_bot_event(message.from_user.id if message.from_user else None, "search_no_results", f"{origin}->{destination};date={departure_date}")
         await message.answer("😔 Билеты не найдены. Попробуйте другую дату или другой маршрут.")
         return
 
     if len(offers) < settings.min_ticket_results:
         await message.answer(f"Нашел {len(offers)} вариант(а). API не вернул достаточно предложений для минимальных {settings.min_ticket_results}.")
+
+    await db.record_bot_event(message.from_user.id if message.from_user else None, "search_success", f"{origin}->{destination};results={len(offers)}")
 
     for index, offer in enumerate(offers[: settings.ticket_results_limit], start=1):
         token = _cache_offer(message.from_user.id, offer, passengers)

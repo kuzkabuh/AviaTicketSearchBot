@@ -12,7 +12,28 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from config import settings
-from keyboards import admin_panel_keyboard, start_search_keyboard, update_confirmation_keyboard
+from keyboards import (
+    admin_force_check_confirmation_keyboard,
+    admin_logs_keyboard,
+    admin_panel_keyboard,
+    admin_restart_confirmation_keyboard,
+    admin_stats_keyboard,
+    admin_users_keyboard,
+    start_search_keyboard,
+    update_confirmation_keyboard,
+)
+from services.admin_control_service import cleanup_temp_files, force_check_all_subscriptions, restart_bot_service
+from services.admin_stats_service import (
+    format_latest_users,
+    format_overview_statistics,
+    format_period_statistics,
+    format_popular_routes,
+    format_subscription_analytics,
+    format_users_summary,
+    format_users_with_subscriptions,
+)
+from services.logs_service import get_log_view
+from services.system_status_service import get_system_status
 from services.update_service import UpdateError, check_updates, is_update_running, start_update
 from services.version_service import get_version_info, read_version
 from utils.admin_access import is_admin
@@ -243,6 +264,232 @@ async def update_log_callback(callback: CallbackQuery) -> None:
         reply_markup=admin_panel_keyboard(),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:back")
+async def admin_back_callback(callback: CallbackQuery) -> None:
+    """Возвращает к главной админ-панели из подразделов."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(ADMIN_PANEL_TEXT, parse_mode="HTML", reply_markup=admin_panel_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:logs")
+async def logs_menu_callback(callback: CallbackQuery) -> None:
+    """Открывает меню просмотра логов."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("🧾 <b>Логи бота</b>\nВыберите тип логов:", parse_mode="HTML", reply_markup=admin_logs_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:logs:"))
+async def log_view_callback(callback: CallbackQuery) -> None:
+    """Показывает выбранный фрагмент логов."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    kind = (callback.data or "").split(":")[-1]
+    view = await get_log_view(kind)
+    body = escape(view.text)
+    text = f"{view.title}\n\n{body}" if view.is_empty else f"{view.title}\n\n<pre>{body}</pre>"
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=admin_logs_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:stats")
+async def stats_callback(callback: CallbackQuery) -> None:
+    """Показывает общую статистику бота."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(await format_overview_statistics(), parse_mode="HTML", reply_markup=admin_stats_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:stats:"))
+async def stats_period_callback(callback: CallbackQuery) -> None:
+    """Показывает статистику за период или аналитический подраздел."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    section = (callback.data or "").split(":")[-1]
+    if section == "routes":
+        text = await format_popular_routes()
+    elif section == "subscriptions":
+        text = await format_subscription_analytics()
+    else:
+        text = await format_period_statistics(section)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:users")
+async def users_callback(callback: CallbackQuery) -> None:
+    """Показывает сводку по пользователям."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(await format_users_summary(), parse_mode="HTML", reply_markup=admin_users_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:users:latest")
+async def latest_users_callback(callback: CallbackQuery) -> None:
+    """Показывает последних пользователей."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(await format_latest_users(), parse_mode="HTML", reply_markup=admin_users_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:users:subscriptions")
+async def users_with_subscriptions_callback(callback: CallbackQuery) -> None:
+    """Показывает пользователей с активными подписками."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(await format_users_with_subscriptions(), parse_mode="HTML", reply_markup=admin_users_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:system")
+async def system_status_callback(callback: CallbackQuery) -> None:
+    """Показывает состояние сервиса и системы."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    status = await get_system_status()
+    await callback.message.answer(
+        "🩺 <b>Состояние системы</b>\n\n"
+        f"🤖 Сервис бота: <b>{escape(status.service_status)}</b>\n"
+        f"⏱ Аптайм приложения: <b>{escape(status.uptime)}</b>\n"
+        f"📦 Версия: <code>{escape(status.version)}</code>\n"
+        f"🔖 Commit: <code>{escape(status.commit_hash)}</code>\n\n"
+        f"🗄 База данных: <b>{escape(status.database_status)}</b>\n"
+        f"🔔 Проверка подписок: <b>{escape(status.price_tracking_status)}</b>\n"
+        f"📌 Активных подписок: <b>{status.active_subscriptions}</b>\n"
+        f"🔒 Lock-файл обновления: <b>{'есть' if status.update_lock_exists else 'нет'}</b>\n\n"
+        f"💾 Свободно на диске: <b>{escape(status.disk_free)}</b>\n"
+        f"🧠 RAM: <b>{escape(status.ram_usage)}</b>\n"
+        f"🖥 CPU load: <b>{escape(status.cpu_load)}</b>",
+        parse_mode="HTML",
+        reply_markup=admin_panel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:restart")
+async def restart_callback(callback: CallbackQuery) -> None:
+    """Запрашивает подтверждение рестарта сервиса."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(
+        "⚠️ <b>Подтвердите перезапуск сервиса бота.</b>",
+        parse_mode="HTML",
+        reply_markup=admin_restart_confirmation_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:restart_confirm")
+async def restart_confirm_callback(callback: CallbackQuery) -> None:
+    """Выполняет подтвержденный рестарт systemd-сервиса."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("⏳ Рестарт сервиса запущен…")
+    ok, output = await restart_bot_service()
+    icon = "✅" if ok else "❌"
+    await callback.message.answer(f"{icon} Результат рестарта: <code>{escape(output)}</code>", parse_mode="HTML", reply_markup=admin_panel_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:restart_cancel")
+async def restart_cancel_callback(callback: CallbackQuery) -> None:
+    """Отменяет рестарт."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("❌ Перезапуск отменён.", reply_markup=admin_panel_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:cleanup")
+async def cleanup_callback(callback: CallbackQuery) -> None:
+    """Очищает безопасные временные файлы."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    result = await cleanup_temp_files()
+    details = "\n".join(f"• {escape(item)}" for item in result.details[:10])
+    await callback.message.answer(
+        "🧹 <b>Очистка завершена.</b>\n"
+        f"Удалено временных файлов: <b>{result.deleted_files}</b>\n"
+        f"Lock-файлов: <b>{result.deleted_locks}</b>\n\n{details}",
+        parse_mode="HTML",
+        reply_markup=admin_panel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:force_check")
+async def force_check_callback(callback: CallbackQuery) -> None:
+    """Запрашивает подтверждение внеплановой проверки подписок."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer(
+        "⚠️ <b>Подтвердите внеплановую проверку всех активных подписок.</b>",
+        parse_mode="HTML",
+        reply_markup=admin_force_check_confirmation_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:force_check_confirm")
+async def force_check_confirm_callback(callback: CallbackQuery) -> None:
+    """Запускает внеплановую проверку подписок."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("⏳ Проверка активных подписок запущена…")
+    result = await force_check_all_subscriptions(callback.bot)
+    await callback.message.answer(
+        "🔔 <b>Проверка подписок завершена</b>\n\n"
+        f"Проверено: <b>{result.checked}</b>\n"
+        f"Цен изменилось: <b>{result.changed}</b>\n"
+        f"Рейсов не найдено: <b>{result.not_found}</b>\n"
+        f"Ошибок: <b>{result.errors}</b>",
+        parse_mode="HTML",
+        reply_markup=admin_panel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:force_check_cancel")
+async def force_check_cancel_callback(callback: CallbackQuery) -> None:
+    """Отменяет внеплановую проверку."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("❌ Проверка подписок отменена.", reply_markup=admin_panel_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:test_notify")
+async def test_notify_callback(callback: CallbackQuery) -> None:
+    """Отправляет тестовое уведомление администратору."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("✅ Тестовое уведомление успешно отправлено.", reply_markup=admin_panel_keyboard())
+    await callback.answer("Тестовое уведомление отправлено")
 
 
 @router.callback_query(F.data == "admin:main_menu")
