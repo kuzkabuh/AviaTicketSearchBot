@@ -9,10 +9,13 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from config import settings
+import db
 from keyboards import (
+    admin_broadcast_confirmation_keyboard,
     admin_force_check_confirmation_keyboard,
     admin_logs_keyboard,
     admin_panel_keyboard,
@@ -35,6 +38,7 @@ from services.admin_stats_service import (
 from services.logs_service import get_log_view
 from services.system_status_service import get_system_status
 from services.update_service import UpdateError, check_updates, is_update_running, start_update
+from states import AdminBroadcastState
 from services.version_service import get_version_info, read_version
 from utils.admin_access import is_admin
 from utils.update_state import mark_update_notified, read_update_state
@@ -372,6 +376,8 @@ async def system_status_callback(callback: CallbackQuery) -> None:
         f"🔖 Commit: <code>{escape(status.commit_hash)}</code>\n\n"
         f"🗄 База данных: <b>{escape(status.database_status)}</b>\n"
         f"🔔 Проверка подписок: <b>{escape(status.price_tracking_status)}</b>\n"
+        f"⏲ Интервал проверки: <b>{escape(status.price_check_interval)}</b>\n"
+        f"🧾 Уровень логирования: <b>{escape(status.log_level)}</b>\n"
         f"📌 Активных подписок: <b>{status.active_subscriptions}</b>\n"
         f"🔒 Lock-файл обновления: <b>{'есть' if status.update_lock_exists else 'нет'}</b>\n\n"
         f"💾 Свободно на диске: <b>{escape(status.disk_free)}</b>\n"
@@ -479,6 +485,111 @@ async def force_check_cancel_callback(callback: CallbackQuery) -> None:
         await _deny_callback(callback)
         return
     await callback.message.answer("❌ Проверка подписок отменена.", reply_markup=admin_panel_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:broadcast")
+async def broadcast_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Запрашивает текст для массовой рассылки пользователям."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await state.set_state(AdminBroadcastState.waiting_text)
+    await callback.message.answer(
+        "📣 <b>Рассылка пользователям</b>\n\n"
+        "Отправьте текст сообщения одним следующим сообщением.\n"
+        "Для отмены используйте /cancel или кнопку отмены на предпросмотре.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminBroadcastState.waiting_text, Command("cancel"))
+@router.message(AdminBroadcastState.waiting_confirmation, Command("cancel"))
+async def broadcast_cancel_command(message: Message, state: FSMContext) -> None:
+    """Отменяет подготовку рассылки командой /cancel."""
+    await state.clear()
+    if not is_admin(_user_id(message)):
+        await _deny_message(message)
+        return
+    await message.answer("❌ Рассылка отменена.", reply_markup=admin_panel_keyboard())
+
+
+@router.message(AdminBroadcastState.waiting_text)
+async def broadcast_text_received(message: Message, state: FSMContext) -> None:
+    """Показывает предпросмотр рассылки и просит подтверждение."""
+    if not is_admin(_user_id(message)):
+        await state.clear()
+        await _deny_message(message)
+        return
+
+    text = (message.text or message.html_text or "").strip()
+    if not text:
+        await message.answer("⚠️ Текст рассылки не должен быть пустым. Отправьте сообщение ещё раз или /cancel.")
+        return
+    if len(text) > 4000:
+        await message.answer("⚠️ Сообщение слишком длинное для безопасной отправки. Сократите текст до 4000 символов.")
+        return
+
+    await state.update_data(broadcast_text=text)
+    await state.set_state(AdminBroadcastState.waiting_confirmation)
+    await message.answer(
+        "👀 <b>Предпросмотр рассылки</b>\n\n"
+        f"{escape(text)}\n\n"
+        "Подтвердите отправку всем пользователям.",
+        parse_mode="HTML",
+        reply_markup=admin_broadcast_confirmation_keyboard(),
+    )
+
+
+@router.callback_query(AdminBroadcastState.waiting_confirmation, F.data == "admin:broadcast_confirm")
+async def broadcast_confirm_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отправляет подтвержденную рассылку всем известным пользователям."""
+    if not is_admin(_user_id(callback)):
+        await state.clear()
+        await _deny_callback(callback)
+        return
+
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    if not text:
+        await state.clear()
+        await callback.answer("Текст рассылки не найден", show_alert=True)
+        return
+
+    user_ids = await db.list_all_user_ids()
+    success = 0
+    failed = 0
+    await callback.message.answer(f"⏳ Рассылка запущена. Получателей: {len(user_ids)}")
+    for user_id in user_ids:
+        try:
+            await callback.bot.send_message(user_id, text, disable_web_page_preview=True)
+            success += 1
+        except Exception as exc:  # noqa: BLE001 - ошибка одного получателя не останавливает рассылку.
+            failed += 1
+            logger.warning("Broadcast send failed user=%s: %s", user_id, exc)
+
+    await db.record_bot_event(_user_id(callback), "admin_broadcast", f"success={success};failed={failed}")
+    await state.clear()
+    await callback.message.answer(
+        "📣 <b>Рассылка завершена</b>\n\n"
+        f"✅ Успешно отправлено: <b>{success}</b>\n"
+        f"❌ Ошибок отправки: <b>{failed}</b>",
+        parse_mode="HTML",
+        reply_markup=admin_panel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminBroadcastState.waiting_confirmation, F.data == "admin:broadcast_cancel")
+async def broadcast_cancel_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отменяет подготовленную рассылку."""
+    if not is_admin(_user_id(callback)):
+        await state.clear()
+        await _deny_callback(callback)
+        return
+    await state.clear()
+    await callback.message.answer("❌ Рассылка отменена.", reply_markup=admin_panel_keyboard())
     await callback.answer()
 
 

@@ -16,7 +16,9 @@ SERVICE_NAME="${BOT_SERVICE_NAME:-avia-ticket-bot.service}"
 LOG_PATH="${BOT_UPDATE_LOG_PATH:-$PROJECT_DIR/logs/update.log}"
 LOCK_PATH="${BOT_UPDATE_LOCK_PATH:-$PROJECT_DIR/runtime/update.lock}"
 STATUS_PATH="${BOT_UPDATE_STATUS_PATH:-$PROJECT_DIR/runtime/update_status.json}"
-DATABASE_PATH="${DATABASE_PATH:-$PROJECT_DIR/avia_bot.sqlite3}"
+DATABASE_PATH="${DATABASE_PATH:-${DATABASE_URL:-$PROJECT_DIR/avia_bot.sqlite3}}"
+DATABASE_PATH="${DATABASE_PATH#sqlite:///}"
+DATABASE_PATH="${DATABASE_PATH#sqlite://}"
 
 mkdir -p "$(dirname "$LOG_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$STATUS_PATH")"
 
@@ -164,6 +166,12 @@ else
   log "ℹ️ Alembic не настроен или команда alembic недоступна"
 fi
 apply_sqlite_migrations
+run python - <<'PY'
+import asyncio
+import db
+
+asyncio.run(db.init_db())
+PY
 
 restart_service
 

@@ -97,11 +97,94 @@ CREATE INDEX IF NOT EXISTS idx_search_history_route_created ON search_history(or
 """
 
 
+USER_COLUMNS: dict[str, str] = {
+    "username": "TEXT",
+    "first_name": "TEXT",
+    "last_name": "TEXT",
+    "created_at": "TEXT NOT NULL DEFAULT ''",
+    "last_activity_at": "TEXT NOT NULL DEFAULT ''",
+}
+
+SEARCH_HISTORY_COLUMNS: dict[str, str] = {
+    "telegram_user_id": "INTEGER",
+    "origin_code": "TEXT NOT NULL DEFAULT '—'",
+    "destination_code": "TEXT NOT NULL DEFAULT '—'",
+    "departure_date": "TEXT NOT NULL DEFAULT '—'",
+    "passengers": "INTEGER NOT NULL DEFAULT 1",
+    "results_count": "INTEGER NOT NULL DEFAULT 0",
+    "status": "TEXT NOT NULL DEFAULT 'unknown'",
+    "created_at": "TEXT NOT NULL DEFAULT ''",
+}
+
+BOT_EVENT_COLUMNS: dict[str, str] = {
+    "telegram_user_id": "INTEGER",
+    "event_type": "TEXT NOT NULL DEFAULT 'unknown'",
+    "details": "TEXT",
+    "created_at": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+SUBSCRIPTION_COLUMNS: dict[str, str] = {
+    "telegram_username": "TEXT",
+    "origin_city": "TEXT NOT NULL DEFAULT '—'",
+    "origin_airport": "TEXT NOT NULL DEFAULT '—'",
+    "origin_code": "TEXT NOT NULL DEFAULT '—'",
+    "destination_city": "TEXT NOT NULL DEFAULT '—'",
+    "destination_airport": "TEXT NOT NULL DEFAULT '—'",
+    "destination_code": "TEXT NOT NULL DEFAULT '—'",
+    "departure_date": "TEXT NOT NULL DEFAULT '—'",
+    "passengers": "INTEGER NOT NULL DEFAULT 1",
+    "airline": "TEXT",
+    "flight_number": "TEXT",
+    "departure_time": "TEXT",
+    "arrival_time": "TEXT",
+    "duration": "INTEGER",
+    "transfers": "INTEGER",
+    "initial_price": "REAL",
+    "last_price": "REAL",
+    "currency": "TEXT NOT NULL DEFAULT 'RUB'",
+    "purchase_link": "TEXT",
+    "offer_id": "TEXT",
+    "created_at": "TEXT NOT NULL DEFAULT ''",
+    "last_checked_at": "TEXT",
+    "last_notified_at": "TEXT",
+    "not_found_notified_at": "TEXT",
+    "failed_checks": "INTEGER NOT NULL DEFAULT 0",
+    "status": "TEXT NOT NULL DEFAULT 'active'",
+    "duplicate_key": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+def _ensure_columns(connection: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    """Добавляет недостающие колонки после обновления старой SQLite-схемы."""
+    existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+    for column, definition in columns.items():
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            logger.info("Added missing column %s.%s", table, column)
+
+
+def _repair_schema(connection: sqlite3.Connection) -> None:
+    """Доводит старые базы до текущей структуры без отдельного Alembic."""
+    _ensure_columns(connection, "subscriptions", SUBSCRIPTION_COLUMNS)
+    _ensure_columns(connection, "users", USER_COLUMNS)
+    _ensure_columns(connection, "search_history", SEARCH_HISTORY_COLUMNS)
+    _ensure_columns(connection, "bot_events", BOT_EVENT_COLUMNS)
+    connection.execute(
+        """
+        UPDATE subscriptions
+        SET duplicate_key = origin_code || ':' || destination_code || ':' || departure_date || ':' || passengers || ':' || COALESCE(offer_id, airline, flight_number, '')
+        WHERE duplicate_key = '' OR duplicate_key IS NULL
+        """
+    )
+
+
 async def init_db() -> None:
-    """Создает таблицы и индексы, не ломая существующую схему."""
+    """Создает таблицы/индексы и ремонтирует старую схему SQLite."""
     def _init() -> None:
         with sqlite3.connect(settings.database_path) as connection:
             connection.executescript(SCHEMA_SQL)
+            _repair_schema(connection)
             connection.commit()
 
     await asyncio.to_thread(_init)
@@ -428,6 +511,15 @@ async def get_users_summary() -> dict[str, int]:
                 "with_active_subscriptions": _scalar(connection, "SELECT COUNT(DISTINCT telegram_user_id) FROM subscriptions WHERE status = ?", (ACTIVE,)),
             }
     return await asyncio.to_thread(_stats)
+
+
+async def list_all_user_ids() -> list[int]:
+    """Возвращает Telegram ID всех известных пользователей для админской рассылки."""
+    def _users() -> list[int]:
+        with _connect() as connection:
+            rows = connection.execute("SELECT telegram_user_id FROM users ORDER BY created_at").fetchall()
+            return [int(row["telegram_user_id"]) for row in rows]
+    return await asyncio.to_thread(_users)
 
 
 async def get_latest_users(limit: int = 10) -> list[dict[str, Any]]:

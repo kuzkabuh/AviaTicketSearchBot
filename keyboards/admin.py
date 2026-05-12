@@ -18,6 +18,7 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔄 Перезапустить бота", callback_data="admin:restart")
     builder.button(text="🧹 Очистить временные файлы", callback_data="admin:cleanup")
     builder.button(text="🔔 Проверить все подписки сейчас", callback_data="admin:force_check")
+    builder.button(text="📣 Рассылка", callback_data="admin:broadcast")
     builder.button(text="📨 Тестовое уведомление", callback_data="admin:test_notify")
     builder.button(text="◀️ В главное меню", callback_data="admin:main_menu")
     builder.adjust(1)
@@ -84,5 +85,14 @@ def admin_force_check_confirmation_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Проверить", callback_data="admin:force_check_confirm")
     builder.button(text="❌ Отмена", callback_data="admin:force_check_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_broadcast_confirmation_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения массовой рассылки."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить всем", callback_data="admin:broadcast_confirm")
+    builder.button(text="❌ Отмена", callback_data="admin:broadcast_cancel")
     builder.adjust(1)
     return builder.as_markup()

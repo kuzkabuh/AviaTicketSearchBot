@@ -23,6 +23,8 @@ class SystemStatus:
     commit_hash: str
     database_status: str
     price_tracking_status: str
+    price_check_interval: str
+    log_level: str
     active_subscriptions: int
     update_lock_exists: bool
     disk_free: str
@@ -96,6 +98,8 @@ async def get_system_status() -> SystemStatus:
         commit_hash=version_info.commit_hash,
         database_status=db_status,
         price_tracking_status="включена" if settings.price_tracking_enabled else "выключена",
+        price_check_interval=f"{settings.price_check_interval_minutes} мин.",
+        log_level=settings.log_level,
         active_subscriptions=active_subscriptions,
         update_lock_exists=Path(settings.bot_update_lock_path).exists(),
         disk_free=f"{usage.free / 1024 / 1024 / 1024:.1f} ГБ",

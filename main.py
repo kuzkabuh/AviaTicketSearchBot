@@ -20,7 +20,7 @@ Path(settings.bot_error_log_path).parent.mkdir(parents=True, exist_ok=True)
 _error_file_handler = logging.FileHandler(settings.bot_error_log_path, encoding="utf-8")
 _error_file_handler.setLevel(logging.ERROR)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level, logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
