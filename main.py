@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from logging_config import setup_logging
 from analytics import AnalyticsTracker
 from database import DatabaseManager
+from commands import set_db_manager, set_analytics_tracker, get_handlers as get_command_handlers
+from handlers import get_handlers as get_handlers_handlers, set_db_manager as set_db_handlers, set_analytics_tracker as set_analytics_handlers
 from utils import parse_utm_params, extract_referral_id, get_command_with_args
 
 load_dotenv()
@@ -156,181 +158,8 @@ async def get_flight_options(origin, dest, dep_date, passengers) -> list:
     return []
 
 # --- КОМАНДЫ ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветствие и обработка реферальных ссылок."""
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = update.effective_user.first_name
-    last_name = update.effective_user.last_name
-    
-    # Регистрация пользователя
-    register_user(user_id, username, first_name, last_name, context)
-    
-    # Обработка реферальной ссылки
-    if context.args:
-        try:
-            referrer_id = int(context.args[0])
-            if referrer_id != user_id:
-                success = add_referral(user_id, referrer_id)
-                if success:
-                    await context.bot.send_message(
-                        chat_id=referrer_id,
-                        text=f"🎉 Пользователь {first_name} перешел по вашей реферальной ссылке!"
-                    )
-        except (ValueError, IndexError):
-            pass
-    
-    await update.message.reply_text(
-        "✈️ **Бот-поисковик авиабилетов v5.0 (коммерческая версия)**\n\n"
-        "🔍 Ищите билеты и получайте уведомления при снижении цены!\n\n"
-        "📌 Команда:\n"
-        "`/track Откуда Куда Дата_Туда [Дата_Обратно] Пассажиры`\n\n"
-        "✅ Пример: `/track Москва Казань 2026-05-27 2026-05-29 2`\n\n"
-        "👥 Пригласи друзей и получи бонусы!\n"
-        f"📎 Ваша реферальная ссылка: https://t.me/avia_search_bot?start={user_id}",
-        parse_mode="Markdown"
-    )
-
-async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Основная логика поиска."""
-    args = context.args
-    if len(args) < 3:
-        await update.message.reply_text(
-            "❌ Неверный формат.\nИспользуйте:\n`/track Москва Казань 2026-05-27 [2026-05-29] 2`",
-            parse_mode="Markdown"
-        )
-        return
-
-    try:
-        raw_origin, raw_dest, dep_date = args[0], args[1], args[2]
-        ret_date = None
-        passengers = 1
-
-        if len(args) == 4:
-            if "-" in args[3]:
-                ret_date = args[3]
-            else:
-                passengers = int(args[3])
-        elif len(args) >= 5:
-            ret_date = args[3]
-            passengers = int(args[4])
-
-        if not (1 <= passengers <= 9):
-            await update.message.reply_text("❌ Кол-во пассажиров: от 1 до 9.")
-            return
-
-    except Exception:
-        await update.message.reply_text("❌ Ошибка в датах или числе пассажиров.")
-        return
-
-    o_code, o_name = await get_city_code(raw_origin)
-    d_code, d_name = await get_city_code(raw_dest)
-
-    if not o_code or not d_code:
-        await update.message.reply_text("❌ Город не найден. Попробуйте другое название.")
-        return
-
-    # Поиск туда
-    await update.message.reply_text(f"🔍 Ищу рейсы: {o_name} → {d_name}...")
-    flights_to = await get_flight_options(o_code, d_code, dep_date, passengers)
-    await send_flight_messages(
-        update, flights_to, o_code, d_code, o_name, d_name,
-        dep_date, passengers, "ТУДА 🛫", is_return=False, return_date=ret_date
-    )
-
-    # Обратно
-    if ret_date:
-        await asyncio.sleep(1)
-        await update.message.reply_text(f"🔍 Ищу обратные рейсы: {d_name} → {o_name}...")
-        flights_back = await get_flight_options(d_code, o_code, ret_date, passengers)
-        await send_flight_messages(
-            update, flights_back, d_code, o_code, d_name, o_name,
-            ret_date, passengers, "ОБРАТНО 🛬", is_return=True, return_date=ret_date
-        )
-
-async def send_flight_messages(update, flights, o_c, d_c, o_n, d_n, date, psng, label,
-                               is_return=False, return_date=None):
-    """Отправка сообщений о рейсах."""
-    if not flights:
-        await update.message.reply_text(f"😔 Рейсы {label.lower()} не найдены.")
-        return
-
-    for i, flight in enumerate(flights, 1):
-        price = flight['price']
-        changes = flight.get('transfers', 0)
-        airline = flight.get('airline', '—')
-        flight_num = flight.get('flight_number', '')
-
-        callback_data = f"sub|{o_c}|{d_c}|{date}|{return_date or ''}|{psng}|{price}"
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🔔 Отслеживать за {price} ₽", callback_data=callback_data)],
-            [InlineKeyboardButton("🔗 Перейти к покупке", url=generate_search_link(o_c, d_c, date, psng, return_date))]
-        ])
-
-        msg = (
-            f"📍 **Вариант №{i} ({label})**\n"
-            f"💰 **Цена: {price} ₽**\n"
-            f"📅 {flight['departure_at'][:16].replace('T', ' ')}\n"
-            f"🔁 Пересадок: {changes}\n"
-            f"✈️ {airline} {flight_num}"
-        )
-        await update.message.reply_text(msg, reply_markup=keyboard, parse_mode="Markdown")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка кнопок."""
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split('|')
-
-    if data[0] == "sub":
-        _, o_c, d_c, dep, ret, psng, price = data
-        _, o_n = await get_city_code(o_c)
-        _, d_n = await get_city_code(d_c)
-        psng = int(psng)
-        price = int(price)
-
-        success = add_subscription(
-            query.message.chat.id, o_c, d_c, o_n, d_n, dep, ret if ret != '' else None,
-            psng, price
-        )
-
-        if success:
-            text = f"✅ Подписка активирована!\n📍 {o_n} → {d_n}\n📅 {dep}"
-            if ret: text += f" | ← {ret}"
-            text += f"\n🔔 Уведомлю при цене < {price} ₽"
-        else:
-            text = "ℹ️ Вы уже отслеживаете этот маршрут."
-
-        await query.edit_message_text(text=text)
-
-    elif data[0] == "del":
-        delete_subscription(data[1])
-        await query.edit_message_text(text="🗑 Подписка удалена.")
-
-async def list_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Список подписок."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, origin_name, dest_name, departure_date, return_date, last_price 
-        FROM subscriptions WHERE user_id = ?
-    ''', (update.effective_chat.id,))
-    subs = cursor.fetchall()
-    conn.close()
-
-    if not subs:
-        await update.message.reply_text("📭 У вас нет активных подписок.")
-        return
-
-    for s in subs:
-        sid, oname, dname, dep, ret, price = s
-        dates = f"📅 {dep}" + (f" → {ret}" if ret else "")
-        btn = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Удалить", callback_data=f"del|{sid}")]])
-        await update.message.reply_text(
-            f"📍 {oname} → {dname}\n{dates}\n💰 Порог: {price} ₽",
-            reply_markup=btn
-        )
+# Удалены дублирующие функции start, track, list_subscriptions, так как они в commands.py
+# Удалены button_handler и send_flight_messages, так как они в handlers.py
 
 async def check_prices_job(context: ContextTypes.DEFAULT_TYPE):
     """Фоновая проверка цен."""
@@ -383,14 +212,22 @@ if __name__ == '__main__':
     db_manager = DatabaseManager(DB_NAME)
     db_manager.init_db()
     analytics_tracker = AnalyticsTracker(DB_NAME)
-    
+
+    # Передача зависимостей модулям
+    set_db_manager(db_manager)
+    set_analytics_tracker(analytics_tracker)
+    set_db_handlers(db_manager)
+    set_analytics_handlers(analytics_tracker)
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('track', track))
-    app.add_handler(CommandHandler('list', list_subscriptions))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
+    # Добавление обработчиков из модулей
+    for handler in get_command_handlers():
+        app.add_handler(handler)
+    
+    for handler in get_handlers_handlers():
+        app.add_handler(handler)
+    
     if app.job_queue:
         app.job_queue.run_repeating(check_prices_job, interval=14400, first=60)
 
