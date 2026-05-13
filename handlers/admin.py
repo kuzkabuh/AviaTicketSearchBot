@@ -5,14 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html import escape
 import logging
-from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from config import settings
 import db
 from keyboards import (
     admin_broadcast_confirmation_keyboard,
@@ -35,7 +33,7 @@ from services.admin_stats_service import (
     format_users_summary,
     format_users_with_subscriptions,
 )
-from services.logs_service import get_log_view
+from services.logs_service import get_log_view, get_update_log_view
 from services.system_status_service import get_system_status
 from services.update_service import UpdateError, check_updates, is_update_running, start_update
 from states import AdminBroadcastState
@@ -62,19 +60,6 @@ async def _deny_message(message: Message) -> None:
 async def _deny_callback(callback: CallbackQuery) -> None:
     logger.warning("Unauthorized admin callback attempt: telegram_id=%s", _user_id(callback))
     await callback.answer(NO_ACCESS_TEXT, show_alert=True)
-
-
-def _tail_update_log(max_lines: int = 50) -> str:
-    log_path = Path(settings.bot_update_log_path)
-    if not log_path.exists():
-        return "Лог обновления пока отсутствует."
-
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError as error:
-        return f"Не удалось прочитать лог обновления: {error}"
-
-    return "\n".join(lines[-max_lines:]) or "Лог обновления пуст."
 
 
 def _format_status(status: str | None) -> str:
@@ -256,14 +241,17 @@ async def update_log_callback(callback: CallbackQuery) -> None:
         return
 
     state = await read_update_state()
-    log_text = _tail_update_log()
-    logger.info("Update log viewed by telegram_id=%s", _user_id(callback))
+    view = await get_update_log_view()
+    truncated_note = "\n\n<i>Показан только последний фрагмент лога.</i>" if view.truncated else ""
+    logger.info("Update log viewed by telegram_id=%s path=%s", _user_id(callback), view.path)
     await callback.message.answer(
-        "📋 <b>Последний лог обновления</b>\n\n"
+        f"{view.title}\n\n"
         f"Статус: <b>{escape(_format_status(state.get('status')))}</b>\n"
         f"Дата запуска: <code>{escape(state.get('started_at') or 'неизвестно')}</code>\n"
-        f"Дата завершения: <code>{escape(state.get('finished_at') or 'неизвестно')}</code>\n\n"
-        f"<pre>{escape(log_text)}</pre>",
+        f"Дата завершения: <code>{escape(state.get('finished_at') or 'неизвестно')}</code>\n"
+        f"Файл: <code>{escape(view.path)}</code>\n\n"
+        f"<pre>{escape(view.text)}</pre>"
+        f"{truncated_note}",
         parse_mode="HTML",
         reply_markup=admin_panel_keyboard(),
     )
