@@ -13,6 +13,7 @@ from keyboards import notification_mode_keyboard, subscriptions_keyboard
 from services.subscriptions import check_subscription_price, create_subscription, delete_subscription, get_user_subscriptions
 from states import SubscriptionCreateState
 from utils.formatters import format_money, format_subscription_list
+from utils.validators import parse_positive_int
 
 router = Router(name="subscriptions")
 
@@ -61,10 +62,7 @@ async def choose_subscription_notification_mode(callback: CallbackQuery, state: 
     if notification_mode == "target_price":
         await state.update_data(subscription_token=token, notification_mode=notification_mode)
         await state.set_state(SubscriptionCreateState.waiting_target_price)
-        await callback.message.answer(
-            "🎯 Введите сумму, ниже которой нужно уведомить о цене. "
-            "Обработка суммы будет добавлена в следующем подэтапе."
-        )
+        await callback.message.answer("Введите целевую цену в рублях, например 7000")
         await callback.answer()
         return
 
@@ -88,6 +86,46 @@ async def choose_subscription_notification_mode(callback: CallbackQuery, state: 
         "Я буду отслеживать цену на этот перелёт."
     )
     await callback.answer()
+
+
+@router.message(SubscriptionCreateState.waiting_target_price)
+async def process_target_price(message: Message, state: FSMContext) -> None:
+    """Валидирует целевую цену и создает подписку с режимом target_price."""
+    target_price = parse_positive_int(message.text)
+    if target_price is None:
+        await message.answer("❌ Введите положительное целое число, например 7000.")
+        return
+
+    data = await state.get_data()
+    token = data.get("subscription_token")
+    cached = get_cached_offer(str(token or ""), message.from_user.id)
+    if not cached:
+        await state.clear()
+        await message.answer("Вариант устарел. Запустите поиск заново.")
+        return
+
+    created, _ = await create_subscription(
+        message.from_user.id,
+        message.from_user.username,
+        cached["offer"],
+        cached["passengers"],
+        "target_price",
+        target_price,
+    )
+    await state.clear()
+
+    if created:
+        await db.record_bot_event(message.from_user.id, "subscription_created", f"notification_mode=target_price;target_price={target_price}")
+    if not created:
+        await message.answer("⚠️ Вы уже отслеживаете этот рейс.")
+        return
+
+    await message.answer(
+        "✅ Подписка создана!\n"
+        "Режим уведомлений: ниже заданной суммы.\n"
+        f"Целевая цена: {format_money(target_price, 'RUB')}.\n"
+        "Я буду отслеживать цену на этот перелёт."
+    )
 
 
 @router.message(Command("subscriptions"))

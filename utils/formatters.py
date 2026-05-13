@@ -129,20 +129,25 @@ def format_subscription_list(subscriptions: list[dict[str, Any]]) -> str:
     for index, subscription in enumerate(subscriptions, start=1):
         route = f"{subscription.get('origin_city')} → {subscription.get('destination_city')}"
         flight = ", ".join(filter(None, [subscription.get("airline"), subscription.get("flight_number")])) or "—"
-        lines.extend(
+        details = [
+            f"<b>{index}. {escape(route)}</b>",
+            f"📅 {escape(str(subscription.get('departure_date') or '—'))}",
+            f"✈️ {escape(flight)}",
+            f"🛫 Вылет: {escape(str(subscription.get('departure_time') or '—'))}",
+            f"💰 Цена при подписке: {format_money(subscription.get('initial_price'), subscription.get('currency') or 'RUB')}",
+            f"📌 Последняя цена: {format_money(subscription.get('last_price'), subscription.get('currency') or 'RUB')}",
+            f"🔔 Режим уведомлений: {escape(format_notification_mode(subscription.get('notification_mode')))}",
+        ]
+        if subscription.get("target_price") is not None:
+            details.append(f"🎯 Целевая цена: {format_money(subscription.get('target_price'), subscription.get('currency') or 'RUB')}")
+        details.extend(
             [
-                f"<b>{index}. {escape(route)}</b>",
-                f"📅 {escape(str(subscription.get('departure_date') or '—'))}",
-                f"✈️ {escape(flight)}",
-                f"🛫 Вылет: {escape(str(subscription.get('departure_time') or '—'))}",
-                f"💰 Цена при подписке: {format_money(subscription.get('initial_price'), subscription.get('currency') or 'RUB')}",
-                f"📌 Последняя цена: {format_money(subscription.get('last_price'), subscription.get('currency') or 'RUB')}",
-                f"🔔 Режим уведомлений: {escape(format_notification_mode(subscription.get('notification_mode')))}",
                 f"🕒 Проверено: {format_dt(subscription.get('last_checked_at'))}",
                 f"📍 Статус: {escape(str(subscription.get('status') or '—'))}",
                 "",
             ]
         )
+        lines.extend(details)
     return "\n".join(lines).strip()
 
 

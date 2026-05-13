@@ -27,9 +27,10 @@ async def create_subscription(
     offer: dict[str, Any],
     passengers: int,
     notification_mode: str = "any_change",
+    target_price: int | None = None,
 ) -> tuple[bool, dict[str, Any] | None]:
     """Создает подписку с защитой от дублей."""
-    created, subscription = await db.create_subscription(telegram_user_id, telegram_username, offer, passengers, notification_mode)
+    created, subscription = await db.create_subscription(telegram_user_id, telegram_username, offer, passengers, notification_mode, target_price)
     if created:
         logger.info("Subscription created user=%s subscription=%s", telegram_user_id, subscription["id"] if subscription else None)
     else:
