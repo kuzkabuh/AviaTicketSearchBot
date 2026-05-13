@@ -162,24 +162,40 @@ def format_price_change(subscription: dict[str, Any], old_price: float, new_pric
     )
 
 
-def format_nearby_calendar_prices(
+def format_calendar_prices(
     prices: list[dict[str, Any]],
     *,
     origin: str,
     destination: str,
     departure_date: str,
+    period_label: str,
     trip_type: str = "one_way",
     return_date: str | None = None,
+    max_items: int | None = None,
+    sort_by_price: bool = False,
 ) -> str:
-    """Форматирует календарные цены для дат ±3 дня."""
+    """Форматирует календарные цены для выбранного периода гибких дат."""
     trip_type_label = "Туда и обратно" if trip_type == "round_trip" else "В одну сторону"
     lowest_price = min(
         (item.get("price") for item in prices if isinstance(item.get("price"), (int, float))),
         default=None,
     )
 
+    def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        date_value = str(item.get("date") or "")
+        price = item.get("price")
+        if sort_by_price:
+            price_value = price if isinstance(price, (int, float)) else float("inf")
+            return (price_value, date_value)
+        return (date_value,)
+
+    prepared_prices = sorted(prices, key=sort_key)
+    total_count = len(prepared_prices)
+    if max_items is not None:
+        prepared_prices = prepared_prices[:max_items]
+
     lines = [
-        "📅 <b>Цены рядом с выбранной датой</b>",
+        f"📅 <b>Цены: {escape(period_label)}</b>",
         "",
         f"<b>Маршрут:</b> {escape(origin)} → {escape(destination)}",
         f"<b>Тип поездки:</b> {trip_type_label}",
@@ -187,9 +203,11 @@ def format_nearby_calendar_prices(
     ]
     if trip_type == "round_trip" and return_date:
         lines.append(f"<b>Дата возвращения:</b> {escape(return_date)}")
+    if max_items is not None and total_count > len(prepared_prices):
+        lines.append(f"<b>Показано:</b> {len(prepared_prices)} самых дешёвых дат из {total_count}")
     lines.append("")
 
-    for item in prices:
+    for item in prepared_prices:
         price = item.get("price")
         currency = item.get("currency") or "RUB"
         date_value = str(item.get("date") or "—")
@@ -203,3 +221,24 @@ def format_nearby_calendar_prices(
         lines.append(f"• {escape(date_value)} — {format_money(price, currency)}{marker_text}")
 
     return "\n".join(lines)
+
+
+def format_nearby_calendar_prices(
+    prices: list[dict[str, Any]],
+    *,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> str:
+    """Форматирует календарные цены для дат ±3 дня."""
+    return format_calendar_prices(
+        prices,
+        origin=origin,
+        destination=destination,
+        departure_date=departure_date,
+        period_label="±3 дня",
+        trip_type=trip_type,
+        return_date=return_date,
+    )
