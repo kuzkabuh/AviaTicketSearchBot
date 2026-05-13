@@ -31,3 +31,9 @@ class AdminBroadcastState(StatesGroup):
 
     waiting_text = State()
     waiting_confirmation = State()
+
+
+class SubscriptionCreateState(StatesGroup):
+    """Состояния сценария создания подписки."""
+
+    waiting_target_price = State()

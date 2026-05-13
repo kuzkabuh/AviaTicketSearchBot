@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     not_found_notified_at TEXT,
     failed_checks INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
-    duplicate_key TEXT NOT NULL
+    duplicate_key TEXT NOT NULL,
+    notification_mode TEXT NOT NULL DEFAULT 'any_change',
+    target_price INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(telegram_user_id, status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status_check ON subscriptions(status, last_checked_at);
@@ -152,6 +154,8 @@ SUBSCRIPTION_COLUMNS: dict[str, str] = {
     "failed_checks": "INTEGER NOT NULL DEFAULT 0",
     "status": "TEXT NOT NULL DEFAULT 'active'",
     "duplicate_key": "TEXT NOT NULL DEFAULT ''",
+    "notification_mode": "TEXT NOT NULL DEFAULT 'any_change'",
+    "target_price": "INTEGER",
 }
 
 
@@ -217,7 +221,14 @@ def make_duplicate_key(offer: dict[str, Any], passengers: int) -> str:
     )
 
 
-async def create_subscription(telegram_user_id: int, telegram_username: str | None, offer: dict[str, Any], passengers: int) -> tuple[bool, dict[str, Any] | None]:
+async def create_subscription(
+    telegram_user_id: int,
+    telegram_username: str | None,
+    offer: dict[str, Any],
+    passengers: int,
+    notification_mode: str = "any_change",
+    target_price: int | None = None,
+) -> tuple[bool, dict[str, Any] | None]:
     """Создает подписку или возвращает признак дубля."""
     duplicate_key = make_duplicate_key(offer, passengers)
     now = utcnow_iso()
@@ -251,6 +262,8 @@ async def create_subscription(telegram_user_id: int, telegram_username: str | No
         "failed_checks": 0,
         "status": ACTIVE,
         "duplicate_key": duplicate_key,
+        "notification_mode": notification_mode,
+        "target_price": target_price,
     }
 
     def _insert() -> tuple[bool, dict[str, Any] | None]:

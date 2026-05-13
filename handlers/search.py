@@ -232,39 +232,64 @@ async def skip_nearby_calendar(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("calendar:nearby:"))
-async def show_nearby_calendar(callback: CallbackQuery) -> None:
-    """Показывает календарные цены в диапазоне ±3 дня от выбранной даты."""
-    token = (callback.data or "").split(":")[-1]
+@router.callback_query(F.data.startswith("calendar:week:"))
+@router.callback_query(F.data.startswith("calendar:month:"))
+async def show_calendar_prices(callback: CallbackQuery) -> None:
+    """Показывает календарные цены для выбранного периода гибких дат."""
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer("Не удалось прочитать период", show_alert=True)
+        return
+
+    _, period, token = parts
+    period_settings = {
+        "nearby": {"label": "±3 дня", "loading": "📅 Ищу цены на даты ±3 дня...", "empty": "дат ±3 дня", "max_items": None, "sort_by_price": False},
+        "week": {"label": "Неделя", "loading": "📆 Ищу цены на неделю...", "empty": "недели", "max_items": None, "sort_by_price": False},
+        "month": {"label": "Месяц", "loading": "🗓 Ищу самые дешёвые даты месяца...", "empty": "месяца", "max_items": 10, "sort_by_price": True},
+    }
+    settings_for_period = period_settings.get(period)
+    if not settings_for_period:
+        await callback.answer("Неизвестный период", show_alert=True)
+        return
+
     user_id = callback.from_user.id if callback.from_user else 0
     context = _get_calendar_context(token, user_id)
     if not context:
         await callback.answer("Контекст поиска устарел. Запустите поиск заново.", show_alert=True)
         return
 
-    await callback.message.edit_text("📅 Ищу цены на даты ±3 дня...")
-    prices = await get_nearby_calendar_prices(
-        context["origin"],
-        context["destination"],
-        context["departure_date"],
-        days=3,
-    )
+    await callback.message.edit_text(settings_for_period["loading"])
+    if period == "week":
+        prices = await get_week_calendar_prices(context["origin"], context["destination"], context["departure_date"])
+    elif period == "month":
+        prices = await get_month_calendar_prices(context["origin"], context["destination"], context["departure_date"])
+    else:
+        prices = await get_nearby_calendar_prices(
+            context["origin"],
+            context["destination"],
+            context["departure_date"],
+            days=3,
+        )
 
     if not prices:
         await callback.message.answer(
-            "😔 По календарю цен нет данных для дат ±3 дня от выбранной даты. "
+            f"😔 По календарю цен нет данных для {settings_for_period['empty']} рядом с выбранной датой. "
             "Попробуйте другой маршрут или дату."
         )
         await callback.answer()
         return
 
     await callback.message.answer(
-        format_nearby_calendar_prices(
+        format_calendar_prices(
             prices,
             origin=context["origin"],
             destination=context["destination"],
             departure_date=context["departure_date"],
+            period_label=settings_for_period["label"],
             trip_type=context.get("trip_type", "one_way"),
             return_date=context.get("return_date"),
+            max_items=settings_for_period["max_items"],
+            sort_by_price=settings_for_period["sort_by_price"],
         ),
         parse_mode="HTML",
     )

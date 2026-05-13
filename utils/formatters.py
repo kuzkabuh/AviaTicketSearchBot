@@ -110,6 +110,16 @@ def format_offer(
     )
 
 
+def format_notification_mode(value: str | None) -> str:
+    """Форматирует режим уведомлений подписки."""
+    labels = {
+        "any_change": "при любом изменении",
+        "price_drop": "только при снижении",
+        "target_price": "ниже заданной суммы",
+    }
+    return labels.get(value or "any_change", "при любом изменении")
+
+
 def format_subscription_list(subscriptions: list[dict[str, Any]]) -> str:
     """Форматирует список активных подписок пользователя."""
     if not subscriptions:
@@ -119,19 +129,25 @@ def format_subscription_list(subscriptions: list[dict[str, Any]]) -> str:
     for index, subscription in enumerate(subscriptions, start=1):
         route = f"{subscription.get('origin_city')} → {subscription.get('destination_city')}"
         flight = ", ".join(filter(None, [subscription.get("airline"), subscription.get("flight_number")])) or "—"
-        lines.extend(
+        details = [
+            f"<b>{index}. {escape(route)}</b>",
+            f"📅 {escape(str(subscription.get('departure_date') or '—'))}",
+            f"✈️ {escape(flight)}",
+            f"🛫 Вылет: {escape(str(subscription.get('departure_time') or '—'))}",
+            f"💰 Цена при подписке: {format_money(subscription.get('initial_price'), subscription.get('currency') or 'RUB')}",
+            f"📌 Последняя цена: {format_money(subscription.get('last_price'), subscription.get('currency') or 'RUB')}",
+            f"🔔 Режим уведомлений: {escape(format_notification_mode(subscription.get('notification_mode')))}",
+        ]
+        if subscription.get("target_price") is not None:
+            details.append(f"🎯 Целевая цена: {format_money(subscription.get('target_price'), subscription.get('currency') or 'RUB')}")
+        details.extend(
             [
-                f"<b>{index}. {escape(route)}</b>",
-                f"📅 {escape(str(subscription.get('departure_date') or '—'))}",
-                f"✈️ {escape(flight)}",
-                f"🛫 Вылет: {escape(str(subscription.get('departure_time') or '—'))}",
-                f"💰 Цена при подписке: {format_money(subscription.get('initial_price'), subscription.get('currency') or 'RUB')}",
-                f"📌 Последняя цена: {format_money(subscription.get('last_price'), subscription.get('currency') or 'RUB')}",
                 f"🕒 Проверено: {format_dt(subscription.get('last_checked_at'))}",
                 f"📍 Статус: {escape(str(subscription.get('status') or '—'))}",
                 "",
             ]
         )
+        lines.extend(details)
     return "\n".join(lines).strip()
 
 
@@ -162,24 +178,40 @@ def format_price_change(subscription: dict[str, Any], old_price: float, new_pric
     )
 
 
-def format_nearby_calendar_prices(
+def format_calendar_prices(
     prices: list[dict[str, Any]],
     *,
     origin: str,
     destination: str,
     departure_date: str,
+    period_label: str,
     trip_type: str = "one_way",
     return_date: str | None = None,
+    max_items: int | None = None,
+    sort_by_price: bool = False,
 ) -> str:
-    """Форматирует календарные цены для дат ±3 дня."""
+    """Форматирует календарные цены для выбранного периода гибких дат."""
     trip_type_label = "Туда и обратно" if trip_type == "round_trip" else "В одну сторону"
     lowest_price = min(
         (item.get("price") for item in prices if isinstance(item.get("price"), (int, float))),
         default=None,
     )
 
+    def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        date_value = str(item.get("date") or "")
+        price = item.get("price")
+        if sort_by_price:
+            price_value = price if isinstance(price, (int, float)) else float("inf")
+            return (price_value, date_value)
+        return (date_value,)
+
+    prepared_prices = sorted(prices, key=sort_key)
+    total_count = len(prepared_prices)
+    if max_items is not None:
+        prepared_prices = prepared_prices[:max_items]
+
     lines = [
-        "📅 <b>Цены рядом с выбранной датой</b>",
+        f"📅 <b>Цены: {escape(period_label)}</b>",
         "",
         f"<b>Маршрут:</b> {escape(origin)} → {escape(destination)}",
         f"<b>Тип поездки:</b> {trip_type_label}",
@@ -187,9 +219,11 @@ def format_nearby_calendar_prices(
     ]
     if trip_type == "round_trip" and return_date:
         lines.append(f"<b>Дата возвращения:</b> {escape(return_date)}")
+    if max_items is not None and total_count > len(prepared_prices):
+        lines.append(f"<b>Показано:</b> {len(prepared_prices)} самых дешёвых дат из {total_count}")
     lines.append("")
 
-    for item in prices:
+    for item in prepared_prices:
         price = item.get("price")
         currency = item.get("currency") or "RUB"
         date_value = str(item.get("date") or "—")
@@ -203,3 +237,24 @@ def format_nearby_calendar_prices(
         lines.append(f"• {escape(date_value)} — {format_money(price, currency)}{marker_text}")
 
     return "\n".join(lines)
+
+
+def format_nearby_calendar_prices(
+    prices: list[dict[str, Any]],
+    *,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> str:
+    """Форматирует календарные цены для дат ±3 дня."""
+    return format_calendar_prices(
+        prices,
+        origin=origin,
+        destination=destination,
+        departure_date=departure_date,
+        period_label="±3 дня",
+        trip_type=trip_type,
+        return_date=return_date,
+    )

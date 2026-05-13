@@ -1,6 +1,6 @@
 """Экспорт FSM-состояний приложения."""
 
-from states.search_states import AdminBroadcastState, PopularDirectionState, TicketSearchState
+from states.search_states import AdminBroadcastState, PopularDirectionState, SubscriptionCreateState, TicketSearchState
 
 SearchStates = TicketSearchState
 PopularStates = PopularDirectionState
@@ -10,5 +10,6 @@ __all__ = [
     "PopularDirectionState",
     "PopularStates",
     "SearchStates",
+    "SubscriptionCreateState",
     "TicketSearchState",
 ]

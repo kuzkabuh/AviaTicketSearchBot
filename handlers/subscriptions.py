@@ -4,24 +4,66 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from handlers.search import get_cached_offer
 import db
-from keyboards import subscriptions_keyboard
+from keyboards import notification_mode_keyboard, subscriptions_keyboard
 from services.subscriptions import check_subscription_price, create_subscription, delete_subscription, get_user_subscriptions
+from states import SubscriptionCreateState
 from utils.formatters import format_money, format_subscription_list
+from utils.validators import parse_positive_int
 
 router = Router(name="subscriptions")
 
+NOTIFICATION_MODE_LABELS = {
+    "any_change": "при любом изменении",
+    "price_drop": "только при снижении",
+    "target_price": "ниже заданной суммы",
+}
+
 
 @router.callback_query(F.data.startswith("sub:create:"))
-async def create_subscription_callback(callback: CallbackQuery) -> None:
-    """Создает подписку на найденный вариант перелета."""
+async def create_subscription_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Запрашивает режим уведомлений перед созданием подписки."""
     token = (callback.data or "").split(":")[-1]
     cached = get_cached_offer(token, callback.from_user.id)
     if not cached:
         await callback.answer("Вариант устарел. Запустите поиск заново.", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.answer(
+        "Как уведомлять вас о цене?",
+        reply_markup=notification_mode_keyboard(token),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sub:mode:"))
+async def choose_subscription_notification_mode(callback: CallbackQuery, state: FSMContext) -> None:
+    """Сохраняет выбранный режим уведомлений и создает подписку, если сумма не требуется."""
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4:
+        await callback.answer("Не удалось прочитать режим уведомлений", show_alert=True)
+        return
+
+    _, _, notification_mode, token = parts
+    if notification_mode not in NOTIFICATION_MODE_LABELS:
+        await callback.answer("Неизвестный режим уведомлений", show_alert=True)
+        return
+
+    cached = get_cached_offer(token, callback.from_user.id)
+    if not cached:
+        await callback.answer("Вариант устарел. Запустите поиск заново.", show_alert=True)
+        return
+
+    if notification_mode == "target_price":
+        await state.update_data(subscription_token=token, notification_mode=notification_mode)
+        await state.set_state(SubscriptionCreateState.waiting_target_price)
+        await callback.message.answer("Введите целевую цену в рублях, например 7000")
+        await callback.answer()
         return
 
     created, _ = await create_subscription(
@@ -29,18 +71,61 @@ async def create_subscription_callback(callback: CallbackQuery) -> None:
         callback.from_user.username,
         cached["offer"],
         cached["passengers"],
+        notification_mode,
     )
     if created:
-        await db.record_bot_event(callback.from_user.id, "subscription_created")
+        await db.record_bot_event(callback.from_user.id, "subscription_created", f"notification_mode={notification_mode}")
     if not created:
         await callback.answer("⚠️ Вы уже отслеживаете этот рейс.", show_alert=True)
         return
 
+    mode_label = NOTIFICATION_MODE_LABELS[notification_mode]
     await callback.message.answer(
         "✅ Подписка создана!\n"
-        "Я буду отслеживать изменение цены на этот перелёт и уведомлю вас, если стоимость изменится."
+        f"Режим уведомлений: {mode_label}.\n"
+        "Я буду отслеживать цену на этот перелёт."
     )
     await callback.answer()
+
+
+@router.message(SubscriptionCreateState.waiting_target_price)
+async def process_target_price(message: Message, state: FSMContext) -> None:
+    """Валидирует целевую цену и создает подписку с режимом target_price."""
+    target_price = parse_positive_int(message.text)
+    if target_price is None:
+        await message.answer("❌ Введите положительное целое число, например 7000.")
+        return
+
+    data = await state.get_data()
+    token = data.get("subscription_token")
+    cached = get_cached_offer(str(token or ""), message.from_user.id)
+    if not cached:
+        await state.clear()
+        await message.answer("Вариант устарел. Запустите поиск заново.")
+        return
+
+    created, _ = await create_subscription(
+        message.from_user.id,
+        message.from_user.username,
+        cached["offer"],
+        cached["passengers"],
+        "target_price",
+        target_price,
+    )
+    await state.clear()
+
+    if created:
+        await db.record_bot_event(message.from_user.id, "subscription_created", f"notification_mode=target_price;target_price={target_price}")
+    if not created:
+        await message.answer("⚠️ Вы уже отслеживаете этот рейс.")
+        return
+
+    await message.answer(
+        "✅ Подписка создана!\n"
+        "Режим уведомлений: ниже заданной суммы.\n"
+        f"Целевая цена: {format_money(target_price, 'RUB')}.\n"
+        "Я буду отслеживать цену на этот перелёт."
+    )
 
 
 @router.message(Command("subscriptions"))
@@ -109,7 +194,6 @@ async def delete_subscription_callback(callback: CallbackQuery) -> None:
     if not deleted:
         await callback.answer("Подписка не найдена", show_alert=True)
         return
-
     await db.record_bot_event(callback.from_user.id, "subscription_deleted", f"subscription={subscription_id}")
-    await callback.message.answer("✅ Подписка удалена.\nЯ больше не буду отслеживать этот рейс.")
+    await callback.message.answer("✅ Подписка удалена.")
     await callback.answer()
