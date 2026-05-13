@@ -34,6 +34,26 @@ def location_choice_keyboard(kind: str, locations: list[Location]) -> InlineKeyb
     return builder.as_markup()
 
 
+def trip_type_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки выбора типа поездки."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✈️ В одну сторону", callback_data="trip_type:one_way")
+    builder.button(text="🔁 Туда и обратно", callback_data="trip_type:round_trip")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def nearby_dates_keyboard(token: str) -> InlineKeyboardMarkup:
+    """Кнопки просмотра календарных цен рядом с выбранной датой."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 ±3 дня", callback_data=f"calendar:nearby:{token}")
+    builder.button(text="📆 Неделя", callback_data=f"calendar:week:{token}")
+    builder.button(text="🗓 Месяц", callback_data=f"calendar:month:{token}")
+    builder.button(text="❌ Не нужно", callback_data=f"calendar:skip:{token}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def offer_subscribe_keyboard(token: str) -> InlineKeyboardMarkup:
     """Кнопка подписки на конкретный найденный вариант."""
     builder = InlineKeyboardBuilder()

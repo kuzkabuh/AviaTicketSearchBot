@@ -12,10 +12,12 @@ from keyboards.admin import (
 )
 from keyboards.inline import (
     location_choice_keyboard,
+    nearby_dates_keyboard,
     offer_subscribe_keyboard,
     popular_directions_keyboard,
     start_search_keyboard,
     subscriptions_keyboard,
+    trip_type_keyboard,
 )
 
 __all__ = [
@@ -28,8 +30,10 @@ __all__ = [
     "admin_users_keyboard",
     "update_confirmation_keyboard",
     "location_choice_keyboard",
+    "nearby_dates_keyboard",
     "offer_subscribe_keyboard",
     "popular_directions_keyboard",
     "start_search_keyboard",
     "subscriptions_keyboard",
+    "trip_type_keyboard",
 ]
