@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS airline_news_sources (
     last_success_at TEXT NULL,
     last_error_at TEXT NULL,
     last_error_message TEXT NULL,
+    health_status TEXT NOT NULL DEFAULT 'unknown',
+    consecutive_errors INTEGER NOT NULL DEFAULT 0,
+    last_alert_sent_at TEXT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (airline_id) REFERENCES airlines(id)
@@ -140,7 +143,7 @@ TABLE_COLUMNS: dict[str, dict[str, str]] = {
         "airline_code": "TEXT NULL", "icao_code": "TEXT NULL", "official_name": "TEXT NOT NULL DEFAULT ''", "display_name_ru": "TEXT NULL", "display_name_en": "TEXT NULL", "country_code": "TEXT NULL", "country_name": "TEXT NULL", "is_russian": "INTEGER NOT NULL DEFAULT 0", "is_active": "INTEGER NULL", "source_origin": "TEXT NOT NULL DEFAULT 'manual'", "official_website": "TEXT NULL", "has_news_source": "INTEGER NOT NULL DEFAULT 0", "news_source_status": "TEXT NOT NULL DEFAULT 'unknown'", "first_seen_in_ticket_results_at": "TEXT NULL", "last_seen_in_ticket_results_at": "TEXT NULL", "ticket_results_count": "INTEGER NOT NULL DEFAULT 0", "created_at": "TEXT NOT NULL DEFAULT ''", "updated_at": "TEXT NOT NULL DEFAULT ''",
     },
     "airline_news_sources": {
-        "airline_id": "INTEGER NOT NULL DEFAULT 0", "airline_code": "TEXT NULL", "airline_name": "TEXT NOT NULL DEFAULT ''", "source_name": "TEXT NOT NULL DEFAULT ''", "source_type": "TEXT NOT NULL DEFAULT 'html'", "source_url": "TEXT NOT NULL DEFAULT ''", "source_role": "TEXT NOT NULL DEFAULT 'news'", "language_code": "TEXT NOT NULL DEFAULT 'ru'", "country_code": "TEXT NULL", "parser_key": "TEXT NULL", "selectors_json": "TEXT NULL", "is_active": "INTEGER NOT NULL DEFAULT 1", "check_interval_minutes": "INTEGER NOT NULL DEFAULT 360", "last_checked_at": "TEXT NULL", "last_success_at": "TEXT NULL", "last_error_at": "TEXT NULL", "last_error_message": "TEXT NULL", "created_at": "TEXT NOT NULL DEFAULT ''", "updated_at": "TEXT NOT NULL DEFAULT ''",
+        "airline_id": "INTEGER NOT NULL DEFAULT 0", "airline_code": "TEXT NULL", "airline_name": "TEXT NOT NULL DEFAULT ''", "source_name": "TEXT NOT NULL DEFAULT ''", "source_type": "TEXT NOT NULL DEFAULT 'html'", "source_url": "TEXT NOT NULL DEFAULT ''", "source_role": "TEXT NOT NULL DEFAULT 'news'", "language_code": "TEXT NOT NULL DEFAULT 'ru'", "country_code": "TEXT NULL", "parser_key": "TEXT NULL", "selectors_json": "TEXT NULL", "is_active": "INTEGER NOT NULL DEFAULT 1", "check_interval_minutes": "INTEGER NOT NULL DEFAULT 360", "last_checked_at": "TEXT NULL", "last_success_at": "TEXT NULL", "last_error_at": "TEXT NULL", "last_error_message": "TEXT NULL", "health_status": "TEXT NOT NULL DEFAULT 'unknown'", "consecutive_errors": "INTEGER NOT NULL DEFAULT 0", "last_alert_sent_at": "TEXT NULL", "created_at": "TEXT NOT NULL DEFAULT ''", "updated_at": "TEXT NOT NULL DEFAULT ''",
     },
     "airline_news": {
         "source_id": "INTEGER NOT NULL DEFAULT 0", "airline_id": "INTEGER NOT NULL DEFAULT 0", "airline_code": "TEXT NULL", "airline_name": "TEXT NOT NULL DEFAULT ''", "category": "TEXT NULL", "title_original": "TEXT NOT NULL DEFAULT ''", "summary_original": "TEXT NULL", "content_original": "TEXT NULL", "title_ru": "TEXT NULL", "summary_ru": "TEXT NULL", "title_en": "TEXT NULL", "summary_en": "TEXT NULL", "source_url": "TEXT NOT NULL DEFAULT ''", "image_url": "TEXT NULL", "published_at": "TEXT NULL", "detected_at": "TEXT NOT NULL DEFAULT ''", "updated_at": "TEXT NOT NULL DEFAULT ''", "status": "TEXT NOT NULL DEFAULT 'pending'", "moderation_comment": "TEXT NULL", "content_hash": "TEXT NOT NULL DEFAULT ''", "external_id": "TEXT NULL", "related_origin_iata": "TEXT NULL", "related_destination_iata": "TEXT NULL", "related_origin_name": "TEXT NULL", "related_destination_name": "TEXT NULL", "promo_code": "TEXT NULL", "sale_end_at": "TEXT NULL", "travel_start_at": "TEXT NULL", "travel_end_at": "TEXT NULL", "published_to_users_at": "TEXT NULL",
@@ -313,9 +316,15 @@ class NewsSourceRepository:
     def mark_checked(self, source_id: int, success: bool, error_message: str | None = None) -> None:
         now = utcnow_iso()
         if success:
-            self.connection.execute("UPDATE airline_news_sources SET last_checked_at = ?, last_success_at = ?, last_error_message = NULL, updated_at = ? WHERE id = ?", (now, now, now, source_id))
+            self.connection.execute(
+                "UPDATE airline_news_sources SET last_checked_at = ?, last_success_at = ?, last_error_message = NULL, health_status = 'ok', consecutive_errors = 0, updated_at = ? WHERE id = ?",
+                (now, now, now, source_id),
+            )
         else:
-            self.connection.execute("UPDATE airline_news_sources SET last_checked_at = ?, last_error_at = ?, last_error_message = ?, updated_at = ? WHERE id = ?", (now, now, (error_message or '')[:1000], now, source_id))
+            self.connection.execute(
+                "UPDATE airline_news_sources SET last_checked_at = ?, last_error_at = ?, last_error_message = ?, health_status = 'broken', consecutive_errors = COALESCE(consecutive_errors, 0) + 1, updated_at = ? WHERE id = ?",
+                (now, now, (error_message or '')[:1000], now, source_id),
+            )
 
     def set_active(self, source_id: int, is_active: bool) -> None:
         self.connection.execute("UPDATE airline_news_sources SET is_active = ?, updated_at = ? WHERE id = ?", (int(is_active), utcnow_iso(), source_id))

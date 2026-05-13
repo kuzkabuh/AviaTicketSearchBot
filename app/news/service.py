@@ -10,6 +10,7 @@ from app.news.fetchers.html_fetcher import HtmlNewsFetcher
 from app.news.fetchers.rss_fetcher import RssNewsFetcher
 from app.news.parser import enrich_item
 from app.news.repository import NewsRepository, NewsSourceRepository, connect, ensure_news_schema
+from services.admin_alerts_service import AdminAlertsService
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +56,25 @@ class NewsCollectionService:
                         _, is_new = news_repo.create_news(data)
                         created += int(is_new)
                     source_repo.mark_checked(source_id, True)
+                    healed_source = source_repo.get_by_id(source_id) or source
+                    pending_count = len(news_repo.get_pending(limit=1000))
                     connection.commit()
+                if int(source.get("consecutive_errors") or 0) > 0:
+                    await AdminAlertsService().news_source_recovered(healed_source)
+                if created:
+                    await AdminAlertsService().news_pending(pending_count)
                 logger.info("News source collection finished id=%s fetched=%s created=%s", source_id, len(items), created)
                 return {"source_id": source_id, "status": "ok", "fetched": len(items), "created": created}
             except Exception as error:  # noqa: BLE001
                 logger.exception("News source collection failed id=%s", source_id)
                 with connect() as connection:
                     ensure_news_schema(connection)
-                    NewsSourceRepository(connection).mark_checked(source_id, False, str(error))
+                    source_repo = NewsSourceRepository(connection)
+                    source_repo.mark_checked(source_id, False, str(error))
+                    broken_source = source_repo.get_by_id(source_id) or source
                     connection.commit()
+                if int(broken_source.get("consecutive_errors") or 0) >= 3:
+                    await AdminAlertsService().news_source_broken(broken_source)
                 return {"source_id": source_id, "status": "error", "error": str(error), "fetched": 0, "created": 0}
         finally:
             self._source_locks.discard(source_id)

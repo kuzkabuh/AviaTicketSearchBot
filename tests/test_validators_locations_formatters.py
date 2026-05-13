@@ -47,3 +47,41 @@ class ValidatorsLocationsFormattersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RoundTripFormatterTest(unittest.TestCase):
+    def test_round_trip_card_contains_return_duration_and_price_label(self):
+        text = format_offer(
+            {
+                "origin": "MOW",
+                "destination": "KZN",
+                "origin_city": "Москва",
+                "destination_city": "Казань",
+                "origin_airport": "SVO",
+                "destination_airport": "KZN",
+                "date": "2026-05-25",
+                "departure_time": "20:40",
+                "return_at": "2026-05-28T10:10:00+03:00",
+                "duration": 205,
+                "duration_to": 95,
+                "duration_back": 110,
+                "transfers_outbound": 0,
+                "transfers_return": 1,
+                "airline": "N4",
+                "flight_number": "123",
+                "price": 18300,
+                "currency": "RUB",
+                "link": "https://www.aviasales.ru/search/MOW2505KZN28053",
+            },
+            1,
+            3,
+            trip_type="round_trip",
+            departure_date="2026-05-25",
+            return_date="2026-05-28",
+        )
+        self.assertIn("туда и обратно", text)
+        self.assertIn("28 мая 2026", text)
+        self.assertIn("Длительность туда", text)
+        self.assertIn("Длительность обратно", text)
+        self.assertIn("Пересадки: 1 пересадк.", text)
+        self.assertIn("Цена найденного предложения туда-обратно", text)
+        self.assertNotIn("Общая стоимость", text)

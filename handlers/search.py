@@ -33,7 +33,7 @@ from services.natural_search_parser import parse_natural_search
 from services.search_models import FlightSearchRequest
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
-from utils.formatters import format_offer
+from utils.formatters import format_offer, format_passengers, format_round_trip_no_results
 
 router = Router(name="search")
 OFFER_CACHE: dict[str, dict[str, Any]] = {}
@@ -158,7 +158,14 @@ async def _confirm_request(target: Message | CallbackQuery, state: FSMContext) -
 
 async def _send_offers(message: Message, request: FlightSearchRequest) -> None:
     user_id = message.from_user.id if message.from_user else None
-    await message.answer(await t(user_id, "search.loading", origin=request.origin_iata, destination=request.destination_iata, date=request.departure_date, passengers=request.api_passengers, currency=request.currency_code))
+    if request.trip_type == "round_trip" and request.return_date:
+        await message.answer(
+            f"🔎 Ищу билеты {request.origin_iata} → {request.destination_iata} → {request.origin_iata}:\n"
+            f"вылет {request.departure_date}, возвращение {request.return_date}.\n"
+            f"Пассажиры: {format_passengers(total=request.api_passengers)}. Валюта: {request.currency_code}."
+        )
+    else:
+        await message.answer(await t(user_id, "search.loading", origin=request.origin_iata, destination=request.destination_iata, date=request.departure_date, passengers=request.api_passengers, currency=request.currency_code))
     try:
         offers = await search_ticket_offers(
             request.origin_iata,
@@ -176,7 +183,24 @@ async def _send_offers(message: Message, request: FlightSearchRequest) -> None:
 
     await db.record_search_history(user_id, request.origin_iata, request.destination_iata, request.departure_date, request.api_passengers, len(offers), "success" if offers else "no_results")
     if not offers:
-        await message.answer(await t(user_id, "search.no_results"))
+        if request.trip_type == "round_trip":
+            link = build_aviasales_search_link(
+                request.origin_iata,
+                request.destination_iata,
+                request.departure_date,
+                trip_type=request.trip_type,
+                return_date=request.return_date,
+                passengers=request.api_passengers,
+                marker=settings.marker,
+                market=request.market_code,
+            )
+            await message.answer(
+                format_round_trip_no_results(request.origin_iata, request.destination_iata, request.departure_date, request.return_date, link),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await message.answer(await t(user_id, "search.no_results"))
         return
     await message.answer(await t(user_id, "search.source_notice"))
     for index, offer in enumerate(offers[: settings.ticket_results_limit], start=1):

@@ -36,6 +36,7 @@ from services.admin_stats_service import (
     format_users_with_subscriptions,
 )
 from services.logs_service import get_log_view, get_update_log_view
+from services.admin_alerts_service import AdminAlertsService
 from services.system_status_service import get_system_status
 from services.update_service import UpdateError, check_updates, is_update_running, start_update
 from states import AdminBroadcastState
@@ -624,11 +625,14 @@ async def notify_update_result_on_start(bot) -> None:
             f"Текущая версия: <code>{escape(read_version())}</code>"
         )
     else:
+        view = await get_update_log_view()
         text = (
             "❌ <b>Во время обновления произошла ошибка</b>\n\n"
             "Обновление не было полностью применено.\n"
-            "Проверьте лог обновления в админ-панели."
+            f"Статус: <code>{escape(str(status))}</code>\n"
+            f"Последние строки лога:\n<pre>{escape(view.text[-1800:])}</pre>"
         )
+        await AdminAlertsService(bot).update_failed(str(status or "unknown"), 1, view.text)
 
     try:
         await bot.send_message(int(telegram_id), text, parse_mode="HTML", reply_markup=admin_panel_keyboard())

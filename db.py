@@ -178,6 +178,7 @@ def _repair_schema(connection: sqlite3.Connection) -> None:
     """Доводит старые базы до текущей структуры без отдельного Alembic."""
     from app.news.airline_registry import seed_initial_airlines_and_sources
     from app.news.repository import ensure_news_schema
+    from services.admin_alerts_service import ensure_admin_alerts_schema
 
     _ensure_columns(connection, "subscriptions", SUBSCRIPTION_COLUMNS)
     _ensure_columns(connection, "users", USER_COLUMNS)
@@ -191,6 +192,7 @@ def _repair_schema(connection: sqlite3.Connection) -> None:
         """
     )
     ensure_news_schema(connection)
+    ensure_admin_alerts_schema(connection)
     if connection.execute("SELECT COUNT(*) FROM airlines").fetchone()[0] == 0:
         seed_initial_airlines_and_sources(connection)
 

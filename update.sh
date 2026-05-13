@@ -172,37 +172,11 @@ apply_sqlite_migrations() {
     return 0
   fi
 
-  if ! command -v sqlite3 >/dev/null 2>&1; then
-    log "⚠️ sqlite3 не найден, SQL-миграции пропущены"
-    return 0
-  fi
-
   log "▶ Применение SQL-миграций из $migrations_dir"
   log "🗄 Путь к базе данных: $DATABASE_PATH"
-
-  sqlite3 "$DATABASE_PATH" \
-    "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);"
-
-  while IFS= read -r migration; do
-    local name
-    local applied
-
-    name="$(basename "$migration")"
-    applied="$(sqlite3 "$DATABASE_PATH" "SELECT COUNT(*) FROM schema_migrations WHERE name = '$name';")"
-
-    if [[ "$applied" == "0" ]]; then
-      log "▶ Применяется миграция $name"
-      sqlite3 "$DATABASE_PATH" < "$migration"
-      sqlite3 "$DATABASE_PATH" "INSERT INTO schema_migrations(name, applied_at) VALUES('$name', datetime('now'));"
-      log "✅ Миграция $name применена"
-    else
-      log "ℹ️ Миграция $name уже применена"
-    fi
-  done < <(find "$migrations_dir" -maxdepth 1 -type f -name '*.sql' | sort)
-
+  run python3 "$PROJECT_DIR/scripts/run_migrations.py" --database "$DATABASE_PATH" --migrations-dir "$migrations_dir"
   log "✅ SQL-миграции обработаны"
 }
-
 systemctl_cmd() {
   if [[ "$SERVICE_RESTART_WITH_SUDO" == "true" ]] && [[ "$EUID" -ne 0 ]]; then
     sudo systemctl "$@"

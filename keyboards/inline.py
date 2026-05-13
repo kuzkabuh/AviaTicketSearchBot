@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.i18n import SUPPORTED_CURRENCIES, translate
 from services.locations import Location
 from services.search_models import FlightSearchRequest
+from utils.formatters import format_passengers
 
 
 def popular_directions_keyboard(origin: str, directions: list[dict[str, Any]]) -> InlineKeyboardMarkup:
@@ -164,7 +165,7 @@ def format_search_confirmation(request: FlightSearchRequest, language_code: str 
     ]
     if request.return_date:
         lines.append(translate(language_code, "confirm.return", date=request.return_date))
-    lines.append(translate(language_code, "confirm.passengers", adults=request.adults, children=request.children, infants=request.infants))
+    lines.append(f"Пассажиры: {format_passengers(request.adults, request.children, request.infants)}")
     lines.append(translate(language_code, "confirm.currency", currency=request.currency_code))
     return "\n".join(lines)
 
