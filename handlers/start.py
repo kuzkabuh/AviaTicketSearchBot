@@ -1,13 +1,19 @@
 """Стартовые команды, language onboarding and main-menu callbacks."""
 
+from datetime import date
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from keyboards import currency_keyboard, language_keyboard, settings_keyboard, start_search_keyboard
+from keyboards import currency_keyboard, language_keyboard, news_card_keyboard, news_menu_keyboard, news_subscriptions_keyboard, settings_keyboard, start_search_keyboard
 import db
 from services.i18n import defaults_for_language, t, translate, user_language
+from app.news.digest_service import personalized_collection
+from app.news.formatters import format_news_card
+from app.news.repository import NewsRepository, NewsSubscriptionRepository, connect, ensure_news_schema
+from services.calendar_keyboard import build_calendar_keyboard
 from states import PopularDirectionState, TicketSearchState
 from utils.admin_access import is_admin
 
@@ -132,4 +138,100 @@ async def menu_popular(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(PopularDirectionState.waiting_origin)
     await callback.message.answer("Введите город, аэропорт или IATA-код отправления для популярных направлений:")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:news")
+async def menu_news(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    await callback.message.answer(translate(language, "news.menu.title"), reply_markup=news_menu_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("news:list:"))
+async def news_list(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    selector = callback.data.rsplit(":", 1)[-1]
+    with connect() as connection:
+        ensure_news_schema(connection)
+        repo = NewsRepository(connection)
+        if selector == "russian":
+            rows = repo.list_published(russian_only=True, limit=5)
+        else:
+            rows = repo.list_published(category=selector, limit=5)
+    if not rows:
+        await callback.message.answer(translate(language, "news.errors.empty"), reply_markup=news_menu_keyboard(language))
+    else:
+        for news in rows:
+            await callback.message.answer(format_news_card(news, language), parse_mode="HTML", disable_web_page_preview=True, reply_markup=news_card_keyboard(news, language))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "news:for_you")
+async def news_for_you(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    await callback.message.answer(personalized_collection(callback.from_user.id, language), reply_markup=news_menu_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "news:subscriptions")
+async def news_subscriptions(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    await callback.message.answer(translate(language, "news.subscriptions.title"), reply_markup=news_subscriptions_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("news:sub:"))
+async def news_subscribe_type(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    subscription_type = callback.data.rsplit(":", 1)[-1]
+    with connect() as connection:
+        ensure_news_schema(connection)
+        NewsSubscriptionRepository(connection).upsert_subscription(callback.from_user.id, subscription_type)
+        connection.commit()
+    await callback.message.answer(translate(language, "news.subscriptions.saved"), reply_markup=news_menu_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("news:subcat:"))
+async def news_subscribe_category(callback: CallbackQuery) -> None:
+    language = await user_language(callback.from_user.id)
+    category = callback.data.rsplit(":", 1)[-1]
+    with connect() as connection:
+        ensure_news_schema(connection)
+        NewsSubscriptionRepository(connection).upsert_subscription(callback.from_user.id, "category", category=category)
+        connection.commit()
+    await callback.message.answer(translate(language, "news.subscriptions.saved"), reply_markup=news_menu_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("news:search:"))
+async def news_search(callback: CallbackQuery, state: FSMContext) -> None:
+    language = await user_language(callback.from_user.id)
+    news_id = int(callback.data.rsplit(":", 1)[-1])
+    with connect() as connection:
+        ensure_news_schema(connection)
+        news = NewsRepository(connection).get_by_id(news_id)
+    if not news or not news.get("related_destination_iata"):
+        await callback.message.answer(translate(language, "news.errors.route_missing"))
+        await callback.answer()
+        return
+    if not news.get("related_origin_iata"):
+        await state.clear()
+        await state.set_state(TicketSearchState.waiting_origin)
+        await state.update_data(destination=news.get("related_destination_iata"), destination_location={"code": news.get("related_destination_iata"), "city": news.get("related_destination_name") or news.get("related_destination_iata")})
+        await callback.message.answer(translate(language, "news.cards.choose_origin"))
+        await callback.answer()
+        return
+    await state.clear()
+    await state.set_state(TicketSearchState.waiting_date)
+    await state.update_data(
+        origin=news.get("related_origin_iata"),
+        destination=news.get("related_destination_iata"),
+        origin_location={"code": news.get("related_origin_iata"), "city": news.get("related_origin_name") or news.get("related_origin_iata")},
+        destination_location={"code": news.get("related_destination_iata"), "city": news.get("related_destination_name") or news.get("related_destination_iata")},
+        trip_type="one_way",
+    )
+    today = date.today()
+    await callback.message.answer(translate(language, "calendar.departure"), reply_markup=build_calendar_keyboard(year=today.year, month=today.month, mode="departure", language_code=language, min_date=today))
     await callback.answer()

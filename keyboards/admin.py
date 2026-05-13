@@ -13,6 +13,7 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📋 Лог обновления", callback_data="admin:update_log")
     builder.button(text="🧾 Логи бота", callback_data="admin:logs")
     builder.button(text="📊 Статистика", callback_data="admin:stats")
+    builder.button(text="📰 Новости", callback_data="admin:news")
     builder.button(text="👥 Пользователи", callback_data="admin:users")
     builder.button(text="🩺 Состояние системы", callback_data="admin:system")
     builder.button(text="🔄 Перезапустить бота", callback_data="admin:restart")
@@ -94,5 +95,31 @@ def admin_broadcast_confirmation_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Отправить всем", callback_data="admin:broadcast_confirm")
     builder.button(text="❌ Отмена", callback_data="admin:broadcast_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_news_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура админского раздела новостей."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⏳ На модерации", callback_data="admin:news:pending")
+    builder.button(text="✅ Одобренные", callback_data="admin:news:approved")
+    builder.button(text="🚫 Отклонённые", callback_data="admin:news:rejected")
+    builder.button(text="📡 Источники", callback_data="admin:news:sources")
+    builder.button(text="✈️ Авиакомпании", callback_data="admin:news:airlines")
+    builder.button(text="🔄 Запустить сбор вручную", callback_data="admin:news:collect")
+    builder.button(text="🔁 Синхронизировать авиакомпании Aviasales", callback_data="admin:news:sync_airlines")
+    builder.button(text="📊 Статистика новостей", callback_data="admin:news:stats")
+    builder.button(text="⬅️ Назад", callback_data="admin:back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def admin_news_moderation_keyboard(news_id: int) -> InlineKeyboardMarkup:
+    """Кнопки модерации новости."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Одобрить и опубликовать", callback_data=f"admin:news:publish:{news_id}")
+    builder.button(text="❌ Отклонить", callback_data=f"admin:news:reject:{news_id}")
+    builder.button(text="🔄 Повторить классификацию", callback_data=f"admin:news:reclassify:{news_id}")
+    builder.button(text="⬅️ К новостям", callback_data="admin:news")
     builder.adjust(1)
     return builder.as_markup()

@@ -176,6 +176,9 @@ def _ensure_columns(connection: sqlite3.Connection, table: str, columns: dict[st
 
 def _repair_schema(connection: sqlite3.Connection) -> None:
     """Доводит старые базы до текущей структуры без отдельного Alembic."""
+    from app.news.airline_registry import seed_initial_airlines_and_sources
+    from app.news.repository import ensure_news_schema
+
     _ensure_columns(connection, "subscriptions", SUBSCRIPTION_COLUMNS)
     _ensure_columns(connection, "users", USER_COLUMNS)
     _ensure_columns(connection, "search_history", SEARCH_HISTORY_COLUMNS)
@@ -187,12 +190,16 @@ def _repair_schema(connection: sqlite3.Connection) -> None:
         WHERE duplicate_key = '' OR duplicate_key IS NULL
         """
     )
+    ensure_news_schema(connection)
+    if connection.execute("SELECT COUNT(*) FROM airlines").fetchone()[0] == 0:
+        seed_initial_airlines_and_sources(connection)
 
 
 async def init_db() -> None:
     """Создает таблицы/индексы и ремонтирует старую схему SQLite."""
     def _init() -> None:
         with sqlite3.connect(settings.database_path) as connection:
+            connection.row_factory = sqlite3.Row
             connection.executescript(SCHEMA_SQL)
             _repair_schema(connection)
             connection.commit()
