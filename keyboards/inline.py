@@ -43,6 +43,15 @@ def trip_type_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def nearby_dates_keyboard(token: str) -> InlineKeyboardMarkup:
+    """Кнопки для просмотра или пропуска календарных цен рядом с датой поиска."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Показать даты ±3 дня", callback_data=f"calendar:nearby:{token}")
+    builder.button(text="Не показывать", callback_data=f"calendar:skip:{token}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def offer_subscribe_keyboard(token: str) -> InlineKeyboardMarkup:
     """Кнопка подписки на конкретный найденный вариант."""
     builder = InlineKeyboardBuilder()

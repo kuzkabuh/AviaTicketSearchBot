@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Файл: update.sh
-# Версия: 1.1.0
-# Описание: Безопасное обновление AviaTicketSearchBot из GitHub,
-#           установка зависимостей, применение миграций БД
-#           и перезапуск systemd-сервиса.
-# Дата изменения: 2026-05-12
+# Описание: безопасное обновление AviaTicketSearchBot из GitHub с логированием,
+#           миграциями SQLite и перезапуском systemd-сервиса после успешного pull.
 # ==============================================================================
 
 set -Eeuo pipefail
 
-# ------------------------------------------------------------------------------
-# 1. Базовые пути и загрузка .env
-# ------------------------------------------------------------------------------
-
-PROJECT_DIR="${BOT_PROJECT_DIR:-/opt/Bots/AviaTicketSearchBot}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="${BOT_PROJECT_DIR:-$SCRIPT_DIR}"
 ENV_FILE="$PROJECT_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -24,49 +18,29 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-# ------------------------------------------------------------------------------
-# 2. Настройки обновления
-# ------------------------------------------------------------------------------
-
 PROJECT_DIR="${BOT_PROJECT_DIR:-$PROJECT_DIR}"
 BRANCH="${BOT_GIT_BRANCH:-master}"
-
-# ВАЖНО:
-# Реальное имя systemd-сервиса в проекте — avia-ticket-search-bot.service
 SERVICE_NAME="${BOT_SERVICE_NAME:-avia-ticket-search-bot.service}"
-
 LOG_PATH="${BOT_UPDATE_LOG_PATH:-$PROJECT_DIR/logs/update.log}"
 LOCK_PATH="${BOT_UPDATE_LOCK_PATH:-$PROJECT_DIR/runtime/update.lock}"
 STATUS_PATH="${BOT_UPDATE_STATUS_PATH:-$PROJECT_DIR/runtime/update_status.json}"
+RESTART_ENABLED="${BOT_RESTART_ENABLED:-true}"
+SERVICE_RESTART_WITH_SUDO="${BOT_SERVICE_RESTART_WITH_SUDO:-true}"
 
 DATABASE_PATH="${DATABASE_PATH:-${DATABASE_URL:-$PROJECT_DIR/avia_bot.sqlite3}}"
 DATABASE_PATH="${DATABASE_PATH#sqlite:///}"
 DATABASE_PATH="${DATABASE_PATH#sqlite://}"
-
-# Если путь к БД относительный — приводим его к абсолютному пути внутри проекта
 if [[ "$DATABASE_PATH" != /* ]]; then
   DATABASE_PATH="$PROJECT_DIR/$DATABASE_PATH"
 fi
 
-# ------------------------------------------------------------------------------
-# 3. Подготовка директорий и логирования
-# ------------------------------------------------------------------------------
-
-mkdir -p \
-  "$(dirname "$LOG_PATH")" \
-  "$(dirname "$LOCK_PATH")" \
-  "$(dirname "$STATUS_PATH")"
-
+mkdir -p "$(dirname "$LOG_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$STATUS_PATH")"
 touch "$LOG_PATH"
 exec >>"$LOG_PATH" 2>&1
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
-
-# ------------------------------------------------------------------------------
-# 4. Запись статуса обновления для админ-панели
-# ------------------------------------------------------------------------------
 
 write_status() {
   local status="$1"
@@ -82,7 +56,6 @@ import os
 from pathlib import Path
 
 path = Path(os.environ["STATUS_PATH"])
-
 try:
     state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 except (OSError, json.JSONDecodeError):
@@ -94,27 +67,13 @@ state["finished_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoform
 state["notified"] = False
 
 path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(
-    json.dumps(state, ensure_ascii=False, indent=2),
-    encoding="utf-8"
-)
+path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
 }
-
-# ------------------------------------------------------------------------------
-# 5. Защита от одновременного запуска обновления
-# ------------------------------------------------------------------------------
-
-if ! mkdir "$LOCK_PATH" 2>/dev/null; then
-  log "⚠️ Обновление уже выполняется: lock $LOCK_PATH существует"
-  write_status "error" "Обновление уже выполняется"
-  exit 1
-fi
 
 cleanup() {
   rm -rf "$LOCK_PATH"
 }
-trap cleanup EXIT
 
 on_error() {
   local exit_code=$?
@@ -122,11 +81,8 @@ on_error() {
   write_status "error" "Ошибка обновления, код $exit_code"
   exit "$exit_code"
 }
+trap cleanup EXIT
 trap on_error ERR
-
-# ------------------------------------------------------------------------------
-# 6. Универсальный запуск команд с логированием
-# ------------------------------------------------------------------------------
 
 run() {
   log "▶ $*"
@@ -134,29 +90,79 @@ run() {
   log "✅ $* — OK"
 }
 
-# ------------------------------------------------------------------------------
-# 7. Проверка обязательных команд
-# ------------------------------------------------------------------------------
-
-check_required_commands() {
+require_command() {
   local missing=0
-
-  for command_name in git python3; do
+  for command_name in "$@"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
       log "❌ Не найдена обязательная команда: $command_name"
       missing=1
     fi
   done
-
   if [[ "$missing" == "1" ]]; then
     write_status "error" "Отсутствуют обязательные системные команды"
     exit 1
   fi
 }
 
-# ------------------------------------------------------------------------------
-# 8. SQL-миграции SQLite
-# ------------------------------------------------------------------------------
+ensure_project_dir() {
+  if [[ ! -d "$PROJECT_DIR" ]]; then
+    log "❌ Каталог проекта не найден: $PROJECT_DIR"
+    write_status "error" "Каталог проекта не найден"
+    exit 1
+  fi
+  cd "$PROJECT_DIR"
+  if [[ ! -d ".git" ]]; then
+    log "❌ Каталог не является Git-репозиторием: $PROJECT_DIR"
+    write_status "error" "Каталог не является Git-репозиторием"
+    exit 1
+  fi
+}
+
+ensure_git_safe_directory() {
+  local output
+  if output="$(git status --short 2>&1 >/dev/null)"; then
+    return 0
+  fi
+
+  if grep -qi "detected dubious ownership" <<<"$output"; then
+    log "⚠️ Git сообщил о dubious ownership для $PROJECT_DIR"
+    log "▶ Добавляю safe.directory только для текущего каталога проекта"
+    run git config --global --add safe.directory "$PROJECT_DIR"
+    return 0
+  fi
+
+  log "$output"
+  return 1
+}
+
+git_remote_branch_exists() {
+  git ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1
+}
+
+resolve_branch() {
+  if git_remote_branch_exists "$BRANCH"; then
+    return 0
+  fi
+
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$current_branch" != "HEAD" ]] && git_remote_branch_exists "$current_branch"; then
+    log "⚠️ Ветка origin/$BRANCH не найдена. Использую текущую ветку: $current_branch"
+    BRANCH="$current_branch"
+    return 0
+  fi
+
+  local origin_head
+  origin_head="$(git remote show origin 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2; exit}')"
+  if [[ -n "$origin_head" ]] && git_remote_branch_exists "$origin_head"; then
+    log "⚠️ Ветка origin/$BRANCH не найдена. Использую HEAD origin: $origin_head"
+    BRANCH="$origin_head"
+    return 0
+  fi
+
+  log "❌ Не найдена удаленная ветка origin/$BRANCH"
+  return 1
+}
 
 apply_sqlite_migrations() {
   local migrations_dir="$PROJECT_DIR/migrations"
@@ -175,28 +181,19 @@ apply_sqlite_migrations() {
   log "🗄 Путь к базе данных: $DATABASE_PATH"
 
   sqlite3 "$DATABASE_PATH" \
-    "CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    );"
+    "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);"
 
   while IFS= read -r migration; do
     local name
     local applied
 
     name="$(basename "$migration")"
-    applied="$(sqlite3 "$DATABASE_PATH" \
-      "SELECT COUNT(*) FROM schema_migrations WHERE name = '$name';")"
+    applied="$(sqlite3 "$DATABASE_PATH" "SELECT COUNT(*) FROM schema_migrations WHERE name = '$name';")"
 
     if [[ "$applied" == "0" ]]; then
       log "▶ Применяется миграция $name"
-
       sqlite3 "$DATABASE_PATH" < "$migration"
-
-      sqlite3 "$DATABASE_PATH" \
-        "INSERT INTO schema_migrations(name, applied_at)
-         VALUES('$name', datetime('now'));"
-
+      sqlite3 "$DATABASE_PATH" "INSERT INTO schema_migrations(name, applied_at) VALUES('$name', datetime('now'));"
       log "✅ Миграция $name применена"
     else
       log "ℹ️ Миграция $name уже применена"
@@ -206,62 +203,70 @@ apply_sqlite_migrations() {
   log "✅ SQL-миграции обработаны"
 }
 
-# ------------------------------------------------------------------------------
-# 9. Перезапуск systemd-сервиса
-# ------------------------------------------------------------------------------
+systemctl_cmd() {
+  if [[ "$SERVICE_RESTART_WITH_SUDO" == "true" ]] && [[ "$EUID" -ne 0 ]]; then
+    sudo systemctl "$@"
+  else
+    systemctl "$@"
+  fi
+}
 
 restart_service() {
+  if [[ "$RESTART_ENABLED" != "true" ]]; then
+    log "ℹ️ Перезапуск сервиса отключен: BOT_RESTART_ENABLED=$RESTART_ENABLED"
+    return 0
+  fi
+
   if ! command -v systemctl >/dev/null 2>&1; then
     log "❌ systemctl не найден. Невозможно перезапустить сервис."
     return 1
   fi
 
+  if [[ "$SERVICE_RESTART_WITH_SUDO" == "true" ]] && [[ "$EUID" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+    log "❌ sudo не найден, но BOT_SERVICE_RESTART_WITH_SUDO=true"
+    return 1
+  fi
+
   local load_state
   load_state="$(systemctl show "$SERVICE_NAME" --property=LoadState --value 2>/dev/null || true)"
-
   if [[ -z "$load_state" || "$load_state" == "not-found" ]]; then
-    log "❌ systemd-сервис $SERVICE_NAME не найден."
-    log "❌ Проверьте BOT_SERVICE_NAME в .env и реальное имя сервиса через:"
-    log "   systemctl list-units --type=service | grep avia"
+    log "❌ systemd-сервис $SERVICE_NAME не найден. Проверьте BOT_SERVICE_NAME."
     return 1
   fi
 
   log "ℹ️ Найден systemd-сервис: $SERVICE_NAME"
-
-  if [[ "${BOT_SERVICE_RESTART_WITH_SUDO:-true}" == "true" ]]; then
-    run sudo systemctl restart "$SERVICE_NAME"
-  else
-    run systemctl restart "$SERVICE_NAME"
-  fi
-
-  run systemctl is-active "$SERVICE_NAME"
+  run systemctl_cmd restart "$SERVICE_NAME"
+  run systemctl_cmd is-active "$SERVICE_NAME"
   log "✅ Сервис $SERVICE_NAME успешно перезапущен"
 }
 
-# ------------------------------------------------------------------------------
-# 10. Основной сценарий обновления
-# ------------------------------------------------------------------------------
+if ! mkdir "$LOCK_PATH" 2>/dev/null; then
+  log "⚠️ Обновление уже выполняется: lock $LOCK_PATH существует"
+  write_status "error" "Обновление уже выполняется"
+  exit 1
+fi
 
 log "============================================================"
 log "🚀 Обновление AviaTicketSearchBot запущено"
 log "Проект: $PROJECT_DIR"
-log "Ветка: $BRANCH"
+log "Запрошенная ветка: $BRANCH"
 log "Сервис: $SERVICE_NAME"
 log "Лог обновления: $LOG_PATH"
 log "Lock-файл: $LOCK_PATH"
 log "Файл статуса: $STATUS_PATH"
 
-check_required_commands
-
-cd "$PROJECT_DIR"
+require_command git python3
+ensure_project_dir
+ensure_git_safe_directory
+resolve_branch
 
 BEFORE_COMMIT="$(git rev-parse --short HEAD)"
 log "Текущий commit до обновления: $BEFORE_COMMIT"
+log "Итоговая ветка обновления: $BRANCH"
 
-run git fetch origin "$BRANCH"
+run git fetch --prune origin "$BRANCH"
 
 COMMITS_BEHIND="$(git rev-list --count "HEAD..origin/$BRANCH")"
-
 if [[ "$COMMITS_BEHIND" == "0" ]]; then
   log "✅ Обновления не найдены. Установлена актуальная версия бота."
   write_status "no_updates" "Обновления не найдены"
@@ -269,15 +274,10 @@ if [[ "$COMMITS_BEHIND" == "0" ]]; then
 fi
 
 log "🆕 Найдены новые изменения. Доступно коммитов: $COMMITS_BEHIND"
-
 run git pull --ff-only origin "$BRANCH"
 
 AFTER_COMMIT="$(git rev-parse --short HEAD)"
 log "Commit после обновления: $AFTER_COMMIT"
-
-# ------------------------------------------------------------------------------
-# 11. Активация виртуального окружения
-# ------------------------------------------------------------------------------
 
 if [[ -f "$PROJECT_DIR/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
@@ -287,29 +287,17 @@ else
   log "⚠️ .venv не найден, зависимости будут установлены текущим python/pip"
 fi
 
-# ------------------------------------------------------------------------------
-# 12. Обновление Python-зависимостей
-# ------------------------------------------------------------------------------
-
 if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
   run python -m pip install -r "$PROJECT_DIR/requirements.txt"
 else
   log "ℹ️ requirements.txt отсутствует, обновление зависимостей пропущено"
 fi
 
-# ------------------------------------------------------------------------------
-# 13. Alembic-миграции, если настроены
-# ------------------------------------------------------------------------------
-
 if [[ -f "$PROJECT_DIR/alembic.ini" ]] && command -v alembic >/dev/null 2>&1; then
   run alembic upgrade head
 else
   log "ℹ️ Alembic не настроен или команда alembic недоступна"
 fi
-
-# ------------------------------------------------------------------------------
-# 14. SQLite-миграции и инициализация БД
-# ------------------------------------------------------------------------------
 
 apply_sqlite_migrations
 
@@ -320,15 +308,7 @@ import db
 asyncio.run(db.init_db())
 PY
 
-# ------------------------------------------------------------------------------
-# 15. Перезапуск сервиса
-# ------------------------------------------------------------------------------
-
 restart_service
-
-# ------------------------------------------------------------------------------
-# 16. Успешное завершение
-# ------------------------------------------------------------------------------
 
 log "✅ Обновление завершено успешно"
 write_status "success" "Обновление успешно применено"

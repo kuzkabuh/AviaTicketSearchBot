@@ -13,11 +13,18 @@ from aiogram.types import CallbackQuery, Message
 from api import build_aviasales_search_link, get_popular_directions
 import db
 from config import settings
-from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard, trip_type_keyboard
+from keyboards import (
+    location_choice_keyboard,
+    nearby_dates_keyboard,
+    offer_subscribe_keyboard,
+    popular_directions_keyboard,
+    trip_type_keyboard,
+)
+from services.calendar_prices import get_nearby_calendar_prices
 from services.locations import Location, find_locations, get_location_by_code
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
-from utils.formatters import format_offer
+from utils.formatters import format_nearby_calendar_prices, format_offer
 from utils.validators import parse_positive_int, validate_date, validate_return_date
 
 router = Router(name="search")
@@ -164,6 +171,11 @@ async def _send_offers(
         await db.record_bot_event(message.from_user.id if message.from_user else None, "search_no_results", f"{origin}->{destination};date={departure_date}")
         await message.answer("😔 Билеты не найдены. Попробуйте другую дату или другой маршрут.")
         return
+
+    await message.answer(
+        "ℹ️ Цены получены из Aviasales Data API: это кешированные данные поисков пользователей, "
+        "а не гарантированная real-time выдача. Перед покупкой проверьте итоговую цену по ссылке."
+    )
 
     if len(offers) < settings.min_ticket_results:
         await message.answer(f"Нашел {len(offers)} вариант(а). API не вернул достаточно предложений для минимальных {settings.min_ticket_results}.")

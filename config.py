@@ -24,8 +24,11 @@ class Settings:
     travelpayouts_token: str
     base_url: str = "https://api.travelpayouts.com"
     currency: str = "rub"
+    market: str = "ru"
+    locale: str = "ru"
     marker: str = ""
     request_timeout: int = 15
+    api_retry_attempts: int = 2
     database_path: str = "avia_bot.sqlite3"
     log_level: str = "INFO"
     ticket_results_limit: int = 5
@@ -118,11 +121,14 @@ def _get_bool_env(*names: str, default: bool) -> bool:
 
 settings = Settings(
     bot_token=_get_env("BOT_TOKEN", "TELEGRAM_TOKEN"),
-    travelpayouts_token=_get_env("TRAVELPAYOUTS_TOKEN"),
+    travelpayouts_token=_get_env("TRAVELPAYOUTS_TOKEN", "AVIASALES_TOKEN"),
     base_url=_get_env("TRAVELPAYOUTS_BASE_URL", default="https://api.travelpayouts.com").rstrip("/"),
     currency=_get_env("CURRENCY", default="rub").lower(),
+    market=_get_env("MARKET", "TRAVELPAYOUTS_MARKET", default="ru").lower(),
+    locale=_get_env("LOCALE", "TRAVELPAYOUTS_LOCALE", default="ru").lower(),
     marker=_get_env("MARKER"),
     request_timeout=_get_int_env("REQUEST_TIMEOUT", default=15),
+    api_retry_attempts=max(0, _get_int_env("API_RETRY_ATTEMPTS", "TRAVELPAYOUTS_API_RETRY_ATTEMPTS", default=2)),
     database_path=_normalize_database_path(_get_env("DATABASE_PATH", "DATABASE_URL", default="avia_bot.sqlite3")),
     log_level=_get_env("LOG_LEVEL", default="INFO").upper(),
     ticket_results_limit=max(1, _get_int_env("TICKET_RESULTS_LIMIT", default=5)),

@@ -1,191 +1,183 @@
 # AviaTicketSearchBot
 
-Асинхронный Telegram-бот для поиска авиабилетов через реальные эндпоинты Aviasales / Travelpayouts API.
+**Версия:** 1.4.0
 
-## Что внутри
+Асинхронный Telegram-бот на `aiogram 3.x` для поиска авиабилетов, показа нескольких предложений, подписок на изменение цены и администрирования через Telegram.
 
-- `aiogram 3.x` и `Router` для команд и сообщений.
-- FSM (`FSMContext`) для сценариев поиска: откуда → куда → тип поездки → дата → количество билетов.
-- Поиск пункта отправления и назначения по IATA-коду, названию города или аэропорта.
-- Inline-выбор локации при неоднозначном вводе, например `Москва` → `MOW`, `SVO`, `DME`, `VKO`, `ZIA`.
-- Inline-выбор типа поездки: `✈️ В одну сторону` или `🔁 Туда и обратно`; для поездки туда и обратно бот дополнительно запрашивает дату возвращения и формирует ссылку на выдачу Aviasales туда-обратно.
-- Вывод нескольких разных вариантов перелета с типом поездки, датами, подробной информацией и кнопкой подписки.
-- Inline-выбор типа поездки: `✈️ В одну сторону` или `🔁 Туда и обратно`; для поездки туда и обратно бот дополнительно запрашивает дату возвращения.
-- Inline-выбор типа поездки: `✈️ В одну сторону` или `🔁 Туда и обратно`. На этом подэтапе сценарий туда-обратно пока запрашивает только дату вылета; дата возврата будет добавлена следующим подэтапом.
-- Вывод нескольких разных вариантов перелета с подробной информацией и кнопкой подписки.
-- SQLite-хранилище подписок и защита от дублей активных подписок.
-- Фоновая проверка изменения цены и уведомления пользователю.
-- Раздел `🔔 Мои подписки` с ручной проверкой и удалением подписок.
+> Важно: бот использует **Aviasales Data API** от Travelpayouts. Этот API возвращает кешированные данные, сформированные на основе поисков пользователей Aviasales. Это не real-time Flights Search API; перед покупкой пользователь должен проверить итоговую цену по ссылке Aviasales.
 
-## Быстрый старт
+## Основные функции
+
+- `/start` — главное меню.
+- `/search` — пошаговый поиск билетов: откуда → куда → тип поездки → дата → пассажиры.
+- Поиск локаций по IATA-коду, русскому названию города или названию аэропорта.
+- Уточнение локации inline-кнопками при неоднозначном вводе, например `Москва` → `MOW`, `SVO`, `DME`, `VKO`, `ZIA`.
+- Вывод нескольких предложений с ценой, временем, пересадками, авиакомпанией, номером рейса и ссылкой Aviasales.
+- Просмотр цен рядом с выбранной датой через сгруппированные цены Data API.
+- `/popular` — популярные направления из выбранного города.
+- `/subscriptions` — подписки на изменение цены, ручная проверка и удаление.
+- Фоновая проверка цен по активным подпискам.
+- `/admin` — админ-панель: версия, обновления, логи, статистика, пользователи, состояние системы, рестарт, рассылка.
+
+## Aviasales / Travelpayouts API
+
+Клиент работает с актуальными v3-эндпоинтами Aviasales Data API:
+
+- `/aviasales/v3/prices_for_dates` — основной поиск дешёвых билетов на даты и популярные направления из города (`unique=true`, `sorting=route`).
+- `/aviasales/v3/get_latest_prices` — дополнительный источник предложений за период, если основной запрос вернул мало вариантов.
+- `/aviasales/v3/grouped_prices` — календарные/сгруппированные цены по датам.
+- `/aviasales/v3/get_popular_directions` — сервисная обёртка для входящих популярных направлений к городу.
+- `/aviasales/v3/search_by_price_range` — сервисная обёртка для будущего поиска по диапазону цен.
+
+Старые методы `/v1/city-directions`, `/v1/prices/cheap`, `/v1/prices/direct`, `/v1/prices/calendar`, `/v1/prices/monthly`, `/v2/prices/latest` и `/v2/prices/calendar` в коде не используются.
+
+Токен передаётся через заголовок `X-Access-Token`, а не в URL. Для ускорения ответа клиент отправляет `Accept-Encoding: gzip, deflate`.
+
+## Структура проекта
+
+```text
+config.py                    # чтение .env и валидация обязательных настроек
+api.py                       # совместимый публичный API-клиент Aviasales Data API v3
+services/aviasales_api.py     # целевая точка импорта API-клиента для новых модулей
+services/location_resolver.py # целевая точка импорта резолвера локаций
+db.py                        # SQLite-схема, миграции на старте и CRUD
+main.py                      # entrypoint aiogram-приложения
+handlers/                    # пользовательские, поисковые, подписочные и админские хендлеры
+keyboards/                   # inline-клавиатуры
+services/                    # бизнес-сервисы: обновления, логи, подписки, статистика, система
+states/                      # FSM-состояния
+utils/                       # валидаторы, форматтеры, admin access, update state
+migrations/                  # SQL-миграции для SQLite
+update.sh                    # self-update через Git/systemd
+install.sh                   # установка на сервер с systemd
+logs/                        # runtime-логи при серверном запуске
+runtime/                     # lock/status файлы обновления
+```
+
+## Быстрый старт локально
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+nano .env
+python main.py
 ```
 
-Заполните `.env`:
+Минимально обязательные переменные:
 
 ```env
 BOT_TOKEN=ваш_telegram_токен
 TRAVELPAYOUTS_TOKEN=ваш_travelpayouts_токен
-MARKER=ваш_маркер_если_есть
-CURRENCY=rub
-DATABASE_PATH=avia_bot.sqlite3
-TICKET_RESULTS_LIMIT=5
-MIN_TICKET_RESULTS=5
-PRICE_TRACKING_ENABLED=true
-PRICE_CHECK_INTERVAL_MINUTES=60
-SUBSCRIPTION_NOT_FOUND_NOTIFY_INTERVAL_HOURS=24
-DUPLICATE_NOTIFICATION_COOLDOWN_MINUTES=30
+ADMIN_IDS=123456789
 ```
 
-Запуск:
-
-```bash
-python main.py
-```
-
-При старте бот автоматически создаст таблицу `subscriptions`. SQL-миграция для ручного применения находится в `migrations/001_create_subscriptions.sql`.
-
-## Команды
-
-- `/start` — приветствие и кнопки быстрого запуска.
-- `/help` — справка по формату ввода.
-- `/search` — пошаговый поиск билетов по городу, аэропорту или IATA-коду.
-- `/popular` — популярные направления из выбранного города.
-- `/subscriptions` — просмотр и управление подписками.
-- `/cancel` — отмена текущего FSM-сценария.
-
-## Сценарий поиска
-
-1. Пользователь запускает `/search` или кнопку `🔎 Найти билет`.
-2. Бот спрашивает пункт отправления: город, аэропорт или IATA-код.
-3. Если найдено несколько вариантов, бот показывает inline-кнопки выбора.
-4. Бот спрашивает пункт назначения и при необходимости снова предлагает выбор.
-5. Бот предлагает выбрать тип поездки: `✈️ В одну сторону` или `🔁 Туда и обратно`.
-6. Пользователь вводит дату вылета в формате `YYYY-MM-DD`.
-7. Для варианта `🔁 Туда и обратно` бот дополнительно спрашивает дату возвращения в формате `YYYY-MM-DD`; дата возвращения должна быть позже даты вылета.
-8. Бот спрашивает количество билетов и принимает только положительное целое число.
-9. Бот показывает до `TICKET_RESULTS_LIMIT` вариантов с типом поездки, датой вылета и датой возвращения для `🔁 Туда и обратно`.
-10. Для `🔁 Туда и обратно` ссылка `Купить билет` ведёт на актуальную выдачу Aviasales с датами вылета и возвращения; цена показывается только по доступным данным Travelpayouts Data API и не складывается вручную.
-
-## Архитектура
-
-```text
-config.py                         # чтение .env и новых настроек
-api.py                            # aiohttp-клиент Travelpayouts и нормализация предложений
-db.py                             # SQLite-схема и CRUD подписок
-main.py                           # Bot, Dispatcher, init DB, routers, price tracking
-handlers/start.py                 # /start, /help, /cancel и кнопки меню
-handlers/search.py                # FSM поиска, выбор локаций, количество билетов, выдача вариантов
-handlers/subscriptions.py         # создание, просмотр, ручная проверка и удаление подписок
-services/locations.py             # справочник и поиск городов/аэропортов
-services/tickets.py               # поиск билетов и сопоставление рейса подписки
-services/calendar_prices.py       # календарные цены рядом с выбранной датой
-services/subscriptions.py         # бизнес-логика подписок и проверки цены
-services/price_tracking.py        # фоновая периодическая проверка цен
-states/search_states.py           # состояния TicketSearchState и PopularDirectionState
-keyboards/inline.py               # inline-клавиатуры
-utils/validators.py               # проверка дат, IATA и количества билетов
-utils/formatters.py               # форматирование билетов, подписок и уведомлений
-migrations/001_create_subscriptions.sql # SQL-схема подписок
-```
-
-## Административная панель и обновления из Telegram
-
-Бот поддерживает закрытый административный раздел внутри Telegram. Доступ к нему получают только пользователи, чьи Telegram ID перечислены в переменной `ADMIN_IDS` (`ADMIN_TELEGRAM_IDS` также поддерживается).
-
-### Новые переменные окружения
-
-Добавьте в `.env`:
+## Основные настройки `.env`
 
 ```env
-# Администраторы бота: Telegram ID через запятую.
-ADMIN_IDS=123456789,987654321
-
-# Абсолютный путь к рабочей копии проекта на сервере.
-BOT_PROJECT_DIR=/opt/Bots/AviaTicketSearchBot
-
-# Ветка, из которой бот проверяет и устанавливает обновления.
-BOT_GIT_BRANCH=master
-
-# systemd service unit, который запускает бота.
-BOT_SERVICE_NAME=avia-ticket-bot.service
-
-# Абсолютный путь к серверному сценарию обновления.
+TRAVELPAYOUTS_BASE_URL=https://api.travelpayouts.com
+CURRENCY=rub
+MARKET=ru
+LOCALE=ru
+REQUEST_TIMEOUT=15
+API_RETRY_ATTEMPTS=2
+DATABASE_PATH=avia_bot.sqlite3
+LOG_LEVEL=INFO
+BOT_SERVICE_NAME=avia-ticket-search-bot.service
 BOT_UPDATE_SCRIPT=/opt/Bots/AviaTicketSearchBot/update.sh
-
-# Путь к файлу с последним логом обновления.
 BOT_UPDATE_LOG_PATH=/opt/Bots/AviaTicketSearchBot/logs/update.log
-
-# Путь к lock-каталогу, защищающему от параллельных обновлений.
-BOT_UPDATE_LOCK_PATH=/opt/Bots/AviaTicketSearchBot/runtime/update.lock
-
-# Путь к JSON-файлу статуса обновления для уведомления после рестарта.
 BOT_UPDATE_STATUS_PATH=/opt/Bots/AviaTicketSearchBot/runtime/update_status.json
-
-# Таймаут отдельных Git-команд проверки обновлений из Python-кода.
-BOT_UPDATE_COMMAND_TIMEOUT_SECONDS=120
-
-# Использовать sudo для рестарта systemd-сервиса в update.sh.
-BOT_SERVICE_RESTART_WITH_SUDO=true
 ```
 
-### Как работает админ-панель
+Полный пример находится в `.env.example`.
 
-1. Администратор отправляет команду `/admin` или нажимает кнопку `⚙️ Админ-панель` в главном меню.
-2. Бот проверяет Telegram ID по списку `ADMIN_IDS` (`ADMIN_TELEGRAM_IDS` также поддерживается).
-3. Если пользователь не администратор, бот отвечает: `⛔ У вас нет доступа к административному разделу.`
-4. Администратор видит меню:
-   - `📌 Версия бота` — показывает версию из файла `VERSION`, ветку, commit hash, дату commit, путь проекта и URL origin.
-   - `🔍 Проверить обновления` — выполняет `git fetch origin <ветка>` и сравнивает `HEAD` с `origin/<ветка>`.
-   - `⬆️ Обновить бота` — запрашивает подтверждение и запускает `update.sh` в отдельной сессии.
-   - `📋 Последний лог обновления` — показывает статус и последние строки `logs/update.log`.
-   - `◀️ В главное меню` — возвращает к обычным кнопкам бота.
+## Установка на сервер
 
-### Полный сценарий обновления через Telegram
+```bash
+sudo bash install.sh
+sudo nano /opt/Bots/AviaTicketSearchBot/.env
+sudo systemctl restart avia-ticket-search-bot.service
+sudo systemctl status avia-ticket-search-bot.service
+```
+
+`install.sh` создаёт системного пользователя `avia-bot`, виртуальное окружение, каталоги `logs/` и `runtime/`, systemd unit с `EnvironmentFile` и делает `update.sh` исполняемым.
+
+## Systemd и права
+
+Рекомендуемый сервис запускает бота не от root, а от отдельного пользователя:
+
+```ini
+[Service]
+User=avia-bot
+WorkingDirectory=/opt/Bots/AviaTicketSearchBot
+EnvironmentFile=-/opt/Bots/AviaTicketSearchBot/.env
+ExecStart=/opt/Bots/AviaTicketSearchBot/.venv/bin/python /opt/Bots/AviaTicketSearchBot/main.py
+Restart=always
+```
+
+Проверьте владельца файлов:
+
+```bash
+sudo chown -R avia-bot:avia-bot /opt/Bots/AviaTicketSearchBot
+chmod +x /opt/Bots/AviaTicketSearchBot/update.sh
+```
+
+Если обновление запускается из бота и должно перезапускать systemd-сервис, выдайте точечное sudoers-право только на нужные команды:
+
+```bash
+command -v systemctl
+sudo visudo -f /etc/sudoers.d/avia-ticket-search-bot
+```
+
+Пример для `/usr/bin/systemctl`:
+
+```sudoers
+avia-bot ALL=(root) NOPASSWD: /usr/bin/systemctl restart avia-ticket-search-bot.service, /usr/bin/systemctl is-active avia-ticket-search-bot.service
+```
+
+Не выдавайте `NOPASSWD: ALL` пользователю бота.
+
+## Обновление через Telegram
 
 1. Администратор открывает `/admin`.
 2. Нажимает `🔍 Проверить обновления`.
-3. Если найдены новые коммиты, нажимает `⬆️ Обновить бота`.
-4. Подтверждает действие кнопкой `✅ Да, обновить`.
-5. Бот сохраняет статус `in_progress` в `BOT_UPDATE_STATUS_PATH`, сообщает о запуске обновления и стартует `update.sh` через `subprocess.Popen` без shell.
-6. `update.sh` создает lock-каталог `BOT_UPDATE_LOCK_PATH`, пишет лог в `BOT_UPDATE_LOG_PATH`, выполняет `git fetch`, проверяет отставание локального commit от `origin/<ветка>` и при наличии обновлений выполняет `git pull --ff-only origin <ветка>`.
-7. Скрипт активирует `.venv`, если оно есть, устанавливает зависимости из `requirements.txt`, применяет Alembic-миграции при наличии `alembic.ini`, затем применяет SQL-файлы из `migrations/` через `sqlite3`, если утилита доступна.
-8. Скрипт перезапускает systemd-сервис из `BOT_SERVICE_NAME` и проверяет `systemctl is-active`.
-9. Перед завершением скрипт записывает итоговый статус `success`, `no_updates` или `error` в `BOT_UPDATE_STATUS_PATH`.
-10. После рестарта бот при старте читает статус и отправляет администратору итоговое сообщение.
+3. При наличии новых коммитов нажимает `⬆️ Обновить бота` и подтверждает действие.
+4. Бот пишет статус `in_progress` в `BOT_UPDATE_STATUS_PATH` и запускает `update.sh` отдельным процессом.
+5. `update.sh` создаёт lock, пишет подробный лог в `BOT_UPDATE_LOG_PATH`, выполняет `git fetch`, `git pull --ff-only`, установку зависимостей, миграции БД и перезапуск сервиса.
+6. После рестарта бот читает status-файл и отправляет администратору результат.
 
-### Настройка sudoers для рестарта сервиса
+`update.sh` учитывает:
 
-Если бот запущен от пользователя `avia-bot`, а сервис называется `avia-ticket-bot.service`, создайте файл `/etc/sudoers.d/avia-ticket-bot` через `visudo`:
+- неверный рабочий каталог;
+- отсутствие `.git`;
+- `fatal: detected dubious ownership in repository` через безопасный `safe.directory` только для каталога проекта;
+- отсутствие нужной ветки и fallback на текущую/HEAD ветку origin;
+- отсутствие `sudo`, `systemctl` или неверное имя сервиса;
+- невозможность записи логов/status/lock.
+
+## Просмотр логов
+
+- Лог бота: `BOT_LOG_PATH`.
+- Лог ошибок: `BOT_ERROR_LOG_PATH`.
+- Лог обновлений: `BOT_UPDATE_LOG_PATH`.
+
+Админ-панель показывает последние строки логов. Если файл отсутствует, недоступен или слишком большой, бот отправляет понятное сообщение и ограниченный хвост лога, чтобы не превысить лимиты Telegram.
+
+## Проверки разработки
 
 ```bash
-sudo visudo -f /etc/sudoers.d/avia-ticket-bot
+python -m ruff check .
+python -m compileall -q .
+python -m unittest discover -s tests
+bash -n update.sh && bash -n install.sh
 ```
 
-Минимальные права только на нужную команду рестарта:
+## Релиз 1.4.0
 
-```sudoers
-avia-bot ALL=(root) NOPASSWD: /bin/systemctl restart avia-ticket-bot.service, /bin/systemctl is-active avia-ticket-bot.service
-```
-
-На некоторых системах `systemctl` расположен в `/usr/bin/systemctl`. Проверьте путь командой `command -v systemctl` и укажите фактический путь:
-
-```sudoers
-avia-bot ALL=(root) NOPASSWD: /usr/bin/systemctl restart avia-ticket-bot.service, /usr/bin/systemctl is-active avia-ticket-bot.service
-```
-
-Не выдавайте пользователю бота полный `NOPASSWD: ALL`.
-
-### Проверка административного раздела
-
-- **Доступ администратора:** добавьте свой Telegram ID в `ADMIN_IDS`, перезапустите бота и отправьте `/admin`. Должно открыться меню админ-панели.
-- **Запрет обычному пользователю:** отправьте `/admin` с аккаунта, ID которого нет в `ADMIN_IDS`. Бот должен ответить `⛔ У вас нет доступа к административному разделу.`
-- **Проверка обновлений:** в админ-панели нажмите `🔍 Проверить обновления`. При актуальном коде бот сообщит, что обновления не найдены; при отставании покажет локальный и удаленный commit.
-- **Запуск обновления:** нажмите `⬆️ Обновить бота`, затем `✅ Да, обновить`. Повторный запуск во время активного обновления должен блокироваться lock-каталогом.
-- **Просмотр лога:** нажмите `📋 Последний лог обновления`. Бот покажет статус, время запуска/завершения и последние строки `BOT_UPDATE_LOG_PATH`.
-- **Сообщение после рестарта:** после успешного `systemctl restart` бот при старте читает `BOT_UPDATE_STATUS_PATH` и отправляет администратору итоговое уведомление.
+- Перевод API-клиента на актуальные Aviasales Data API v3.
+- Передача Travelpayouts-токена через `X-Access-Token`.
+- Отказ от старых `/v1` и `/v2` ценовых эндпоинтов.
+- Безопасное чтение логов обновления в админке.
+- Устойчивый self-update через `update.sh` с lock/status/logging и обработкой Git/systemd ошибок.
+- Исправление сценария календарных цен рядом с датой.
