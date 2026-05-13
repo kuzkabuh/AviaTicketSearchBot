@@ -148,6 +148,7 @@ def start_search_keyboard(is_admin: bool = False, language_code: str = "ru") -> 
     builder.button(text=translate(language_code, "menu.smart_search"), callback_data="menu:smart_search")
     builder.button(text=translate(language_code, "menu.popular"), callback_data="menu:popular")
     builder.button(text=translate(language_code, "menu.subscriptions"), callback_data="menu:subscriptions")
+    builder.button(text=translate(language_code, "menu.news"), callback_data="menu:news")
     builder.button(text=translate(language_code, "menu.settings"), callback_data="menu:settings")
     if is_admin:
         builder.button(text=translate(language_code, "menu.admin"), callback_data="menu:admin")
@@ -166,3 +167,39 @@ def format_search_confirmation(request: FlightSearchRequest, language_code: str 
     lines.append(translate(language_code, "confirm.passengers", adults=request.adults, children=request.children, infants=request.infants))
     lines.append(translate(language_code, "confirm.currency", currency=request.currency_code))
     return "\n".join(lines)
+
+
+def news_menu_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    """User news menu."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "news.menu.russian_airlines"), callback_data="news:list:russian")
+    builder.button(text=translate(language_code, "news.menu.sales"), callback_data="news:list:discount_sale")
+    builder.button(text=translate(language_code, "news.menu.promo_codes"), callback_data="news:list:promo_code")
+    builder.button(text=translate(language_code, "news.menu.new_routes"), callback_data="news:list:new_route")
+    builder.button(text=translate(language_code, "news.menu.resumed_routes"), callback_data="news:list:route_resumed")
+    builder.button(text=translate(language_code, "news.menu.for_you"), callback_data="news:for_you")
+    builder.button(text=translate(language_code, "news.menu.subscriptions"), callback_data="news:subscriptions")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def news_card_keyboard(news: dict[str, Any], language_code: str = "ru") -> InlineKeyboardMarkup:
+    """Buttons below a news card."""
+    builder = InlineKeyboardBuilder()
+    if news.get("related_destination_iata"):
+        builder.button(text=translate(language_code, "news.cards.search_flights"), callback_data=f"news:search:{news['id']}")
+    elif news.get("category") in {"discount_sale", "promo_code"}:
+        builder.button(text=translate(language_code, "news.cards.check_flights"), callback_data="menu:search")
+    builder.button(text=translate(language_code, "news.cards.source"), url=str(news.get("source_url") or "https://www.aviasales.ru"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+def news_subscriptions_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    """Basic news subscription choices."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "news.subscriptions.all"), callback_data="news:sub:all")
+    builder.button(text=translate(language_code, "news.subscriptions.all_russian"), callback_data="news:sub:all_russian_airlines")
+    builder.button(text=translate(language_code, "news.subscriptions.personalized"), callback_data="news:sub:personalized")
+    for category in ("discount_sale", "promo_code", "new_route", "route_resumed", "seasonal_schedule"):
+        builder.button(text=translate(language_code, f"news.categories.{category}"), callback_data=f"news:subcat:{category}")
+    builder.adjust(1)
+    return builder.as_markup()

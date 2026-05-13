@@ -16,6 +16,8 @@ from keyboards import (
     admin_broadcast_confirmation_keyboard,
     admin_force_check_confirmation_keyboard,
     admin_logs_keyboard,
+    admin_news_keyboard,
+    admin_news_moderation_keyboard,
     admin_panel_keyboard,
     admin_restart_confirmation_keyboard,
     admin_stats_keyboard,
@@ -38,6 +40,10 @@ from services.system_status_service import get_system_status
 from services.update_service import UpdateError, check_updates, is_update_running, start_update
 from states import AdminBroadcastState
 from services.version_service import get_version_info, read_version
+from app.news.airline_sync_service import AirlineSyncService
+from app.news.formatters import format_admin_news_card
+from app.news.repository import AirlineRepository, NewsRepository, NewsSourceRepository, connect, ensure_news_schema
+from app.news.service import NewsCollectionService
 from utils.admin_access import is_admin
 from utils.update_state import mark_update_notified, read_update_state
 
@@ -632,3 +638,172 @@ async def notify_update_result_on_start(bot) -> None:
 
     state["last_notification_attempt_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     await mark_update_notified()
+
+
+@router.callback_query(F.data == "admin:news")
+async def admin_news_callback(callback: CallbackQuery) -> None:
+    """Shows news administration entry point."""
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.message.answer("📰 <b>Новости</b>\nВыберите раздел:", parse_mode="HTML", reply_markup=admin_news_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:news:airlines")
+async def admin_news_airlines_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    with connect() as connection:
+        ensure_news_schema(connection)
+        stats = AirlineRepository(connection).stats()
+    text = (
+        "✈️ <b>Авиакомпании</b>\n\n"
+        f"Всего: <b>{stats.get('total', 0)}</b>\n"
+        f"Российских: <b>{stats.get('russian', 0)}</b>\n"
+        f"Активных: <b>{stats.get('active', 0)}</b>\n"
+        f"С источниками новостей: <b>{stats.get('with_sources', 0)}</b>\n"
+        f"Без источников: <b>{stats.get('without_sources', 0)}</b>\n"
+        f"Встречались в билетах: <b>{stats.get('seen_in_tickets', 0)}</b>"
+    )
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=admin_news_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:news:sources")
+async def admin_news_sources_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    with connect() as connection:
+        ensure_news_schema(connection)
+        sources = NewsSourceRepository(connection).get_active_sources()[:30]
+    lines = ["📡 <b>Активные источники новостей</b>", ""]
+    if not sources:
+        lines.append("Источники пока не настроены.")
+    for source in sources:
+        lines.append(f"• {escape(str(source.get('airline_name')))} · {escape(str(source.get('source_role')))} · {escape(str(source.get('source_type')))}")
+    await callback.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=admin_news_keyboard(), disable_web_page_preview=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:news:pending")
+async def admin_news_pending_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    with connect() as connection:
+        ensure_news_schema(connection)
+        pending = NewsRepository(connection).get_pending(limit=5)
+    if not pending:
+        await callback.message.answer("⏳ Новостей на модерации нет.", reply_markup=admin_news_keyboard())
+    else:
+        for news in pending:
+            await callback.message.answer(format_admin_news_card(news), parse_mode="HTML", reply_markup=admin_news_moderation_keyboard(int(news["id"])), disable_web_page_preview=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.in_({"admin:news:approved", "admin:news:rejected"}))
+async def admin_news_status_list_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    status = "approved" if callback.data.endswith("approved") else "rejected"
+    with connect() as connection:
+        ensure_news_schema(connection)
+        rows = [dict(row) for row in connection.execute("SELECT * FROM airline_news WHERE status = ? ORDER BY updated_at DESC LIMIT 10", (status,))]
+    lines = [f"<b>{'✅ Одобренные' if status == 'approved' else '🚫 Отклонённые'} новости</b>", ""]
+    lines.extend(f"• #{row['id']} {escape(str(row.get('airline_name')))} — {escape(str(row.get('title_original'))[:90])}" for row in rows)
+    if not rows:
+        lines.append("Пока пусто.")
+    await callback.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=admin_news_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:news:stats")
+async def admin_news_stats_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    with connect() as connection:
+        ensure_news_schema(connection)
+        airline_stats = AirlineRepository(connection).stats()
+        news_stats = NewsRepository(connection).stats()
+        by_category = connection.execute("SELECT COALESCE(category, 'uncategorized') c, COUNT(*) n FROM airline_news GROUP BY category ORDER BY n DESC").fetchall()
+    lines = [
+        "📊 <b>Статистика новостей</b>", "",
+        f"Источников всего: <b>{news_stats.get('sources_total', 0)}</b>",
+        f"Активных источников: <b>{news_stats.get('sources_active', 0)}</b>",
+        f"Российских авиакомпаний: <b>{airline_stats.get('russian', 0)}</b>",
+        f"Российских с источниками: <b>{airline_stats.get('with_sources', 0)}</b>",
+        f"Авиакомпаний в билетах: <b>{airline_stats.get('seen_in_tickets', 0)}</b>",
+        f"Новостей всего: <b>{news_stats.get('total', 0)}</b>",
+        f"На модерации: <b>{news_stats.get('pending', 0)}</b>",
+        f"Опубликовано: <b>{news_stats.get('published', 0)}</b>",
+        f"Отклонено: <b>{news_stats.get('rejected', 0)}</b>",
+        f"Доставок за сутки: <b>{news_stats.get('deliveries_24h', 0)}</b>", "", "По категориям:",
+    ]
+    lines.extend(f"• {row['c']}: {row['n']}" for row in by_category)
+    await callback.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=admin_news_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:news:collect")
+async def admin_news_collect_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.answer("Запускаю сбор новостей…")
+    result = await NewsCollectionService().collect_due_sources(limit=10, concurrency=2)
+    created = sum(int(item.get("created", 0)) for item in result)
+    fetched = sum(int(item.get("fetched", 0)) for item in result)
+    await callback.message.answer(f"🔄 Сбор завершён. Источников: {len(result)}, найдено: {fetched}, новых: {created}.", reply_markup=admin_news_keyboard())
+
+
+@router.callback_query(F.data == "admin:news:sync_airlines")
+async def admin_news_sync_airlines_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    await callback.answer("Запускаю синхронизацию…")
+    try:
+        result = await AirlineSyncService().sync()
+    except Exception as error:  # noqa: BLE001
+        logger.exception("Manual airline sync failed")
+        await callback.message.answer(f"❌ Ошибка синхронизации: {escape(str(error))}", parse_mode="HTML", reply_markup=admin_news_keyboard())
+        return
+    await callback.message.answer(
+        "🔁 <b>Синхронизация завершена</b>\n"
+        f"Загружено: <b>{result.get('loaded', 0)}</b>\n"
+        f"Создано: <b>{result.get('created', 0)}</b>\n"
+        f"Обновлено: <b>{result.get('updated', 0)}</b>\n"
+        f"Российских в справочнике: <b>{result.get('russian', 0)}</b>",
+        parse_mode="HTML",
+        reply_markup=admin_news_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:news:publish:"))
+async def admin_news_publish_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    news_id = int(callback.data.rsplit(":", 1)[-1])
+    await NewsCollectionService().publish_news(news_id, "approved by admin")
+    await callback.message.answer(f"✅ Новость #{news_id} опубликована.", reply_markup=admin_news_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:news:reject:"))
+async def admin_news_reject_callback(callback: CallbackQuery) -> None:
+    if not is_admin(_user_id(callback)):
+        await _deny_callback(callback)
+        return
+    news_id = int(callback.data.rsplit(":", 1)[-1])
+    with connect() as connection:
+        ensure_news_schema(connection)
+        NewsRepository(connection).update_status(news_id, "rejected", "rejected by admin")
+        connection.commit()
+    await callback.message.answer(f"❌ Новость #{news_id} отклонена.", reply_markup=admin_news_keyboard())
+    await callback.answer()

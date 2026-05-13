@@ -13,6 +13,7 @@ import db
 from handlers import admin, search, start, subscriptions
 from middlewares import UserActivityMiddleware
 from services.price_tracking import PriceTrackingService
+from app.news.scheduler import NewsScheduler
 
 
 Path(settings.bot_log_path).parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ async def main() -> None:
     dispatcher.message.middleware(UserActivityMiddleware())
     dispatcher.callback_query.middleware(UserActivityMiddleware())
     price_tracking = PriceTrackingService(bot)
+    news_scheduler = NewsScheduler()
 
     dispatcher.include_router(admin.router)
     dispatcher.include_router(start.router)
@@ -51,10 +53,12 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         await admin.notify_update_result_on_start(bot)
         price_tracking.start()
+        news_scheduler.start()
         logger.info("Bot polling started")
         await dispatcher.start_polling(bot)
     finally:
         await price_tracking.stop()
+        await news_scheduler.stop()
         await close_api_session()
         await bot.session.close()
         logger.info("Bot polling stopped")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from api import search_cheap_tickets
+from app.news.repository import record_airlines_from_offers
 from config import settings
 
 
@@ -19,7 +20,7 @@ async def search_ticket_offers(
     market: str | None = None,
 ) -> list[dict[str, Any]]:
     """Возвращает до настроенного лимита разных вариантов перелета."""
-    return await search_cheap_tickets(
+    offers = await search_cheap_tickets(
         origin,
         destination,
         date,
@@ -29,6 +30,8 @@ async def search_ticket_offers(
         currency=currency,
         market=market,
     )
+    await record_airlines_from_offers(offers)
+    return offers
 
 
 def find_matching_offer(subscription: dict[str, Any], offers: list[dict[str, Any]]) -> dict[str, Any] | None:
