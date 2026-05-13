@@ -61,6 +61,16 @@ def offer_subscribe_keyboard(token: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def notification_mode_keyboard(token: str) -> InlineKeyboardMarkup:
+    """Кнопки выбора режима уведомлений для подписки."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 При любом изменении", callback_data=f"sub:mode:any_change:{token}")
+    builder.button(text="📉 Только при снижении", callback_data=f"sub:mode:price_drop:{token}")
+    builder.button(text="🎯 Ниже заданной суммы", callback_data=f"sub:mode:target_price:{token}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def subscriptions_keyboard(subscriptions: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     """Кнопки управления активными подписками пользователя."""
     builder = InlineKeyboardBuilder()

@@ -110,6 +110,16 @@ def format_offer(
     )
 
 
+def format_notification_mode(value: str | None) -> str:
+    """Форматирует режим уведомлений подписки."""
+    labels = {
+        "any_change": "при любом изменении",
+        "price_drop": "только при снижении",
+        "target_price": "ниже заданной суммы",
+    }
+    return labels.get(value or "any_change", "при любом изменении")
+
+
 def format_subscription_list(subscriptions: list[dict[str, Any]]) -> str:
     """Форматирует список активных подписок пользователя."""
     if not subscriptions:
@@ -127,6 +137,7 @@ def format_subscription_list(subscriptions: list[dict[str, Any]]) -> str:
                 f"🛫 Вылет: {escape(str(subscription.get('departure_time') or '—'))}",
                 f"💰 Цена при подписке: {format_money(subscription.get('initial_price'), subscription.get('currency') or 'RUB')}",
                 f"📌 Последняя цена: {format_money(subscription.get('last_price'), subscription.get('currency') or 'RUB')}",
+                f"🔔 Режим уведомлений: {escape(format_notification_mode(subscription.get('notification_mode')))}",
                 f"🕒 Проверено: {format_dt(subscription.get('last_checked_at'))}",
                 f"📍 Статус: {escape(str(subscription.get('status') or '—'))}",
                 "",

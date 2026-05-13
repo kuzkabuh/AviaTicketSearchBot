@@ -21,9 +21,15 @@ def _price(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-async def create_subscription(telegram_user_id: int, telegram_username: str | None, offer: dict[str, Any], passengers: int) -> tuple[bool, dict[str, Any] | None]:
+async def create_subscription(
+    telegram_user_id: int,
+    telegram_username: str | None,
+    offer: dict[str, Any],
+    passengers: int,
+    notification_mode: str = "any_change",
+) -> tuple[bool, dict[str, Any] | None]:
     """Создает подписку с защитой от дублей."""
-    created, subscription = await db.create_subscription(telegram_user_id, telegram_username, offer, passengers)
+    created, subscription = await db.create_subscription(telegram_user_id, telegram_username, offer, passengers, notification_mode)
     if created:
         logger.info("Subscription created user=%s subscription=%s", telegram_user_id, subscription["id"] if subscription else None)
     else:
