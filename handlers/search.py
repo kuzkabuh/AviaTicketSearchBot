@@ -13,11 +13,18 @@ from aiogram.types import CallbackQuery, Message
 from api import build_aviasales_search_link, get_popular_directions
 import db
 from config import settings
-from keyboards import location_choice_keyboard, offer_subscribe_keyboard, popular_directions_keyboard, trip_type_keyboard
+from keyboards import (
+    location_choice_keyboard,
+    nearby_dates_keyboard,
+    offer_subscribe_keyboard,
+    popular_directions_keyboard,
+    trip_type_keyboard,
+)
+from services.calendar_prices import get_nearby_calendar_prices
 from services.locations import Location, find_locations, get_location_by_code
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
-from utils.formatters import format_offer
+from utils.formatters import format_nearby_calendar_prices, format_offer
 from utils.validators import parse_positive_int, validate_date, validate_return_date
 
 router = Router(name="search")
