@@ -243,3 +243,20 @@ bash -n update.sh && bash -n install.sh
 - `user_news_deliveries`.
 
 Админский запуск: **⚙️ Административная панель → 📰 Новости**. Пользовательский раздел: **📰 Новости и акции** в главном меню. Подробная документация находится в [`docs/news_module.md`](docs/news_module.md).
+
+
+## Стабилизация обновлений, round-trip поиска и новостей
+
+- SQL-миграции применяются идемпотентно через `scripts/run_migrations.py`; повторный `update.sh` безопасен для production SQLite.
+- Ошибка `duplicate column name: notification_mode` устранена структурной проверкой 003-миграции и автоматическим recovery в `schema_migrations`.
+- Round-trip поиск Aviasales Data API теперь требует `return_at` в ответе и не показывает one-way цену как цену туда-обратно.
+- Для известных авиакомпаний IATA-код нормализуется в человекочитаемое имя, например `N4 → Nordwind Airlines (N4)`.
+- Новостные источники получили health-check поля и admin alerts при поломке/восстановлении.
+
+Документация:
+
+- `docs/update_process.md`
+- `docs/migrations.md`
+- `docs/search_round_trip.md`
+- `docs/news_module.md`
+- `docs/admin_alerts.md`

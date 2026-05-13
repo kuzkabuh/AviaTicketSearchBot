@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from config import settings
+from services.airlines import format_airline_name
 from services.locations import get_location_by_code
 from utils.validators import validate_api_date, validate_iata_format
 
@@ -34,8 +35,10 @@ TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 @dataclass(frozen=True)
 class TicketOffer:
-    """Нормализованное предложение билета из ответов Aviasales Data API."""
+    """Strict normalized flight offer from Aviasales Data API."""
 
+    provider: str
+    trip_type: str
     origin: str
     destination: str
     origin_city: str
@@ -43,18 +46,31 @@ class TicketOffer:
     destination_city: str
     destination_airport: str
     date: str
+    departure_at: str | None
+    return_at: str | None
     departure_time: str
     arrival_time: str
     duration: int | None
+    duration_to: int | None
+    duration_back: int | None
     price: int | float | None
     currency: str
     airline: str
+    airline_outbound: str
     flight_number: str
+    flight_number_outbound: str
+    airline_return: str | None
+    flight_number_return: str | None
     transfers: int | None
+    transfers_outbound: int | None
+    transfers_return: int | None
     link: str
+    booking_link: str
     offer_id: str
     expires_at: str | None = None
     source: str = "aviasales_data_api"
+    source_raw_type: str = "aviasales_data_api"
+    round_trip_confirmed: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Возвращает словарь для форматирования, подписок и сохранения."""
@@ -305,12 +321,28 @@ class TravelPayoutsAPI:
         normalized_origin = str(raw_item.get("origin") or raw_item.get("origin_code") or origin).upper()
         normalized_destination = str(raw_item.get("destination") or raw_item.get("destination_code") or destination).upper()
         departure_date = self._extract_departure_date(raw_item, fallback_date)
-        airline = str(raw_item.get("airline") or raw_item.get("airline_code") or "не указана")
+        raw_return_at = raw_item.get("return_at")
+        confirmed_round_trip = trip_type == "round_trip" and isinstance(raw_return_at, str) and len(raw_return_at) >= 10
+        if trip_type == "round_trip" and not confirmed_round_trip:
+            logger.info(
+                "Skipping non-round-trip Aviasales item origin=%s destination=%s date=%s source=%s: missing return_at",
+                normalized_origin,
+                normalized_destination,
+                departure_date,
+                source,
+            )
+            return None
+        airline_code = str(raw_item.get("airline") or raw_item.get("airline_code") or "не указана")
+        airline = format_airline_name(airline_code)
         flight_number = str(raw_item.get("flight_number") or raw_item.get("flight") or "-")
         transfers = self._extract_int(raw_item, "transfers", "number_of_changes", "changes")
-        duration = self._extract_int(raw_item, "duration", "duration_to", "total_duration")
+        return_transfers = self._extract_int(raw_item, "return_transfers", "return_number_of_changes")
+        duration_to = self._extract_int(raw_item, "duration_to")
+        duration_back = self._extract_int(raw_item, "duration_back")
+        duration = self._extract_int(raw_item, "duration", "total_duration") or ((duration_to or 0) + (duration_back or 0) if duration_to or duration_back else None)
+        departure_at = raw_item.get("departure_at") if isinstance(raw_item.get("departure_at"), str) else None
         departure_time = self._extract_time(raw_item, "departure_at", "departure_time", "depart_date")
-        arrival_time = self._extract_time(raw_item, "return_at", "arrival_at", "arrival_time", "return_date")
+        arrival_time = self._extract_time(raw_item, "arrival_at", "arrival_time")
         origin_city, origin_airport = self._location_parts(normalized_origin)
         destination_city, destination_airport = self._location_parts(normalized_destination)
         offer_id = str(raw_item.get("uuid") or raw_item.get("proposal_id") or raw_item.get("id") or raw_item.get("expected_price_uuid") or "")
@@ -320,7 +352,10 @@ class TravelPayoutsAPI:
                 f"{arrival_time}:{airline}:{flight_number}:{transfers}:{self._extract_price(raw_item)}"
             )
 
+        link = self._build_ticket_link(normalized_origin, normalized_destination, departure_date, raw_item, trip_type=trip_type, return_date=return_date)
         return TicketOffer(
+            provider="aviasales",
+            trip_type="round_trip" if confirmed_round_trip else "one_way",
             origin=normalized_origin,
             destination=normalized_destination,
             origin_city=origin_city,
@@ -328,18 +363,31 @@ class TravelPayoutsAPI:
             destination_city=destination_city,
             destination_airport=str(raw_item.get("destination_airport") or destination_airport),
             date=departure_date,
+            departure_at=departure_at,
+            return_at=raw_return_at if confirmed_round_trip else None,
             departure_time=departure_time,
             arrival_time=arrival_time,
             duration=duration,
+            duration_to=duration_to,
+            duration_back=duration_back,
             price=self._extract_price(raw_item),
             currency=str(raw_item.get("currency") or self.currency).upper(),
             airline=airline,
+            airline_outbound=airline,
             flight_number=flight_number,
+            flight_number_outbound=flight_number,
+            airline_return=format_airline_name(raw_item.get("return_airline")) if raw_item.get("return_airline") else None,
+            flight_number_return=str(raw_item.get("return_flight_number") or raw_item.get("return_flight") or "") or None,
             transfers=transfers,
-            link=self._build_ticket_link(normalized_origin, normalized_destination, departure_date, raw_item, trip_type=trip_type, return_date=return_date),
+            transfers_outbound=transfers,
+            transfers_return=return_transfers,
+            link=link,
+            booking_link=link,
             offer_id=offer_id,
             expires_at=raw_item.get("expires_at") if isinstance(raw_item.get("expires_at"), str) else None,
             source=source,
+            source_raw_type=source,
+            round_trip_confirmed=confirmed_round_trip,
         )
 
     def _normalize_many(
@@ -401,6 +449,11 @@ class TravelPayoutsAPI:
             page=1,
             currency=currency,
             market=market,
+        )
+        logger.debug(
+            "Aviasales prices_for_dates request origin=%s destination=%s departure_at=%s return_at=%s one_way=%s currency=%s market=%s limit=%s sorting=%s",
+            params.get("origin"), params.get("destination"), params.get("departure_at"), params.get("return_at"),
+            params.get("one_way"), params.get("currency"), params.get("market"), params.get("limit"), params.get("sorting"),
         )
         payload = await self._make_request(PRICES_FOR_DATES_ENDPOINT, params)
         data = payload.get("data", []) if payload else []
@@ -501,8 +554,10 @@ class TravelPayoutsAPI:
         if len(offers) < desired_count:
             offers.extend(await self._search_grouped_prices(origin, destination, date, trip_type=trip_type, return_date=return_date, currency=currency, market=market))
 
+        if trip_type == "round_trip":
+            offers = [offer for offer in offers if offer.round_trip_confirmed and offer.return_at]
         normalized = self._deduplicate_offers(offers, effective_limit)
-        logger.info("Ticket search origin=%s destination=%s date=%s trip_type=%s offers=%s", origin, destination, date, trip_type, len(normalized))
+        logger.info("Ticket search origin=%s destination=%s date=%s return_date=%s trip_type=%s offers=%s", origin, destination, date, return_date, trip_type, len(normalized))
         return [offer.as_dict() for offer in normalized]
 
     async def get_calendar_prices(self, origin: str, destination: str, date: str) -> list[dict[str, Any]]:
@@ -526,6 +581,11 @@ class TravelPayoutsAPI:
             one_way="true",
             limit=min(max(limit, 1), 1000),
             page=1,
+        )
+        logger.debug(
+            "Aviasales prices_for_dates request origin=%s destination=%s departure_at=%s return_at=%s one_way=%s currency=%s market=%s limit=%s sorting=%s",
+            params.get("origin"), params.get("destination"), params.get("departure_at"), params.get("return_at"),
+            params.get("one_way"), params.get("currency"), params.get("market"), params.get("limit"), params.get("sorting"),
         )
         payload = await self._make_request(PRICES_FOR_DATES_ENDPOINT, params)
         data = payload.get("data", []) if payload else []

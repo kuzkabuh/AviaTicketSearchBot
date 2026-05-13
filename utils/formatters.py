@@ -6,6 +6,8 @@ from datetime import datetime
 from html import escape
 from typing import Any
 
+from services.airlines import format_airline_name
+
 
 def format_money(value: Any, currency: str = "RUB") -> str:
     """Форматирует цену с валютой."""
@@ -44,6 +46,45 @@ def format_transfers(transfers: Any) -> str:
     return f"{transfers} пересадк."
 
 
+def format_passengers(adults: int = 1, children: int = 0, infants: int = 0, *, total: int | None = None) -> str:
+    """Format passenger counters without zero categories."""
+    if total is not None:
+        adults = total
+        children = 0
+        infants = 0
+    parts: list[str] = []
+    if adults:
+        parts.append(f"{adults} взрослых")
+    if children:
+        parts.append(f"{children} детей")
+    if infants:
+        parts.append(f"{infants} младенцев")
+    return ", ".join(parts) or "1 взрослый"
+
+
+def _date_label(value: Any) -> str:
+    if not value:
+        return "—"
+    text = str(value)[:10]
+    try:
+        dt = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return str(value)
+    months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    return f"{dt.day} {months[dt.month - 1]} {dt.year}"
+
+
+def format_round_trip_no_results(origin: str, destination: str, departure_date: str, return_date: str | None, link: str) -> str:
+    return (
+        "В доступном кэше Aviasales не найдено корректных предложений туда-обратно на эти даты.\n\n"
+        f"Маршрут: {escape(origin)} → {escape(destination)} → {escape(origin)}\n"
+        f"Вылет: {escape(_date_label(departure_date))}\n"
+        f"Возвращение: {escape(_date_label(return_date))}\n\n"
+        "Можно проверить актуальные варианты по партнёрской ссылке Aviasales, попробовать соседние даты или выполнить поиск только «туда».\n"
+        f'🔗 <a href="{escape(link, quote=True)}">Открыть поиск Aviasales туда-обратно</a>'
+    )
+
+
 def format_dt(value: str | None) -> str:
     """Форматирует ISO-даты для списка подписок."""
     if not value:
@@ -63,56 +104,70 @@ def format_offer(
     departure_date: str | None = None,
     return_date: str | None = None,
 ) -> str:
-    """Форматирует найденный вариант перелета."""
+    """Форматирует найденный вариант перелета without overstating round-trip prices."""
     currency = offer.get("currency") or "RUB"
     price = offer.get("price")
     total = price * passengers if isinstance(price, (int, float)) else None
-    link = offer.get("link") or "https://www.aviasales.ru"
+    link = offer.get("booking_link") or offer.get("link") or "https://www.aviasales.ru"
+    is_round_trip = trip_type == "round_trip" and bool(offer.get("return_at"))
+    if trip_type == "round_trip" and not is_round_trip:
+        return format_round_trip_no_results(str(offer.get("origin") or "—"), str(offer.get("destination") or "—"), departure_date or str(offer.get("date") or ""), return_date, link)
+
     route = f"{offer.get('origin_city') or offer.get('origin')} → {offer.get('destination_city') or offer.get('destination')}"
-    is_round_trip = trip_type == "round_trip"
-    trip_type_label = "Туда и обратно" if is_round_trip else "В одну сторону"
-    departure_date_value = departure_date or offer.get("date") or "—"
+    airline = format_airline_name(offer.get("airline_outbound") or offer.get("airline"))
 
-    date_lines = [
-        f"<b>Тип поездки:</b> {trip_type_label}",
-        f"<b>Дата вылета:</b> {escape(str(departure_date_value))}",
-    ]
     if is_round_trip:
-        date_lines.append(f"<b>Дата возвращения:</b> {escape(str(return_date or '—'))}")
-
-    price_lines = [f"<b>Количество билетов:</b> {passengers}"]
-    if is_round_trip:
-        price_lines.extend(
-            [
-                f"<b>Цена из доступных данных API:</b> {format_money(price, currency)}",
-                "ℹ️ Travelpayouts Data API может возвращать цену только по доступному сегменту; "
-                "ссылка ведёт к актуальной выдаче Aviasales для маршрута туда-обратно.",
-            ]
-        )
-    else:
-        price_lines.extend(
-            [
-                f"<b>Цена за билет:</b> {format_money(price, currency)}",
-                f"<b>Общая стоимость:</b> {format_money(total, currency)}",
-            ]
-        )
-
-    date_block = "\n".join(date_lines)
-    price_block = "\n".join(price_lines)
+        return_at = offer.get("return_at") or return_date
+        return_time = str(return_at)[11:16] if isinstance(return_at, str) and "T" in return_at and len(return_at) >= 16 else "—"
+        title = f"✈️ <b>Вариант {index} — туда и обратно</b>"
+        lines = [
+            title,
+            "",
+            f"<b>Маршрут:</b> {escape(route)} → {escape(str(offer.get('origin_city') or offer.get('origin') or '—'))}",
+            "",
+            "<b>Туда:</b>",
+            f"• Дата и время: {escape(_date_label(departure_date or offer.get('departure_at') or offer.get('date')))} {escape(str(offer.get('departure_time') or '—'))}",
+            f"• Из: {escape(str(offer.get('origin_airport') or '—'))} <code>{escape(str(offer.get('origin') or '—'))}</code>",
+            f"• В: {escape(str(offer.get('destination_airport') or '—'))} <code>{escape(str(offer.get('destination') or '—'))}</code>",
+            f"• Авиакомпания: {escape(airline)}",
+            f"• Рейс: {escape(str(offer.get('flight_number_outbound') or offer.get('flight_number') or '-'))}",
+            f"• Пересадки: {format_transfers(offer.get('transfers_outbound', offer.get('transfers')))}",
+            "",
+            "<b>Обратно:</b>",
+            f"• Дата и время: {escape(_date_label(return_at))} {escape(return_time)}",
+            f"• Из: <code>{escape(str(offer.get('destination') or '—'))}</code>",
+            f"• В: <code>{escape(str(offer.get('origin') or '—'))}</code>",
+            f"• Авиакомпания: {escape(format_airline_name(offer.get('airline_return')) if offer.get('airline_return') else 'API не предоставил отдельно')}",
+            f"• Рейс: {escape(str(offer.get('flight_number_return') or 'API не предоставил отдельно'))}",
+            f"• Пересадки: {format_transfers(offer.get('transfers_return'))}",
+            "",
+            f"<b>Общая длительность:</b> {format_duration(offer.get('duration'))}",
+            f"<b>Длительность туда:</b> {format_duration(offer.get('duration_to'))}",
+            f"<b>Длительность обратно:</b> {format_duration(offer.get('duration_back'))}",
+            f"<b>Пассажиры:</b> {escape(format_passengers(total=passengers))}",
+            f"<b>Цена найденного предложения туда-обратно из Data API:</b> {format_money(price, currency)}",
+            "ℹ️ API предоставил агрегированные данные по предложению туда-обратно; невыданные поля не дополнялись искусственно.",
+            "",
+            f'🔗 <a href="{escape(link, quote=True)}">Купить билет</a>',
+        ]
+        return "\n".join(lines)
 
     return (
         f"✈️ <b>Вариант {index}</b>\n\n"
         f"<b>Маршрут:</b> {escape(route)}\n"
         f"<b>Вылет:</b> {escape(str(offer.get('origin_airport') or '—'))} <code>{escape(str(offer.get('origin') or '—'))}</code>\n"
         f"<b>Прилёт:</b> {escape(str(offer.get('destination_airport') or '—'))} <code>{escape(str(offer.get('destination') or '—'))}</code>\n"
-        f"{date_block}\n"
+        f"<b>Тип поездки:</b> В одну сторону\n"
+        f"<b>Дата вылета:</b> {escape(_date_label(departure_date or offer.get('date')))}\n"
         f"<b>Время:</b> {escape(str(offer.get('departure_time') or '—'))} → {escape(str(offer.get('arrival_time') or '—'))}\n"
         f"<b>В пути:</b> {format_duration(offer.get('duration'))}\n"
         f"<b>Пересадки:</b> {format_transfers(offer.get('transfers'))}\n"
-        f"<b>Авиакомпания:</b> {escape(str(offer.get('airline') or 'не указана'))}\n"
+        f"<b>Авиакомпания:</b> {escape(airline)}\n"
         f"<b>Рейс:</b> {escape(str(offer.get('flight_number') or '-'))}\n"
-        f"{price_block}\n\n"
-        f"🔗 <a href=\"{escape(link, quote=True)}\">Купить билет</a>"
+        f"<b>Количество билетов:</b> {passengers}\n"
+        f"<b>Цена за билет:</b> {format_money(price, currency)}\n"
+        f"<b>Общая стоимость:</b> {format_money(total, currency)}\n\n"
+        f'🔗 <a href="{escape(link, quote=True)}">Купить билет</a>'
     )
 
 
