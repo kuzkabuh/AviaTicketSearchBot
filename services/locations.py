@@ -51,6 +51,7 @@ LOCATIONS: tuple[Location, ...] = (
     Location("EVN", "Ереван", "Звартноц", "Армения", True),
     Location("TBS", "Тбилиси", "Шота Руставели", "Грузия", True),
     Location("AMS", "Амстердам", "Схипхол", "Нидерланды", True),
+    Location("LON", "London", "all airports", "United Kingdom", True),
     Location("BER", "Берлин", "Бранденбург", "Германия", True),
     Location("PAR", "Париж", "все аэропорты", "Франция", True),
     Location("ROM", "Рим", "все аэропорты", "Италия", True),
@@ -89,7 +90,8 @@ def find_locations(query: str | None, limit: int = 8) -> list[Location]:
         location = get_location_by_code(normalized_code)
         return [location] if location else []
 
-    needle = _normalize_text(raw_query)
+    aliases = {"москвы": "москва", "питера": "санкт-петербург", "лондона": "london", "казани": "казань"}
+    needle = aliases.get(_normalize_text(raw_query), _normalize_text(raw_query))
     exact: list[Location] = []
     partial: list[Location] = []
 

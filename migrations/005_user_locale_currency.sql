@@ -1,0 +1,6 @@
+-- User locale/currency migration. Apply idempotently from application code:
+-- db._ensure_columns checks PRAGMA table_info before ALTER TABLE to avoid duplicate column errors.
+-- Required columns:
+-- users.language_code TEXT NOT NULL DEFAULT 'ru'
+-- users.currency_code TEXT NOT NULL DEFAULT 'RUB'
+-- users.market_code TEXT NOT NULL DEFAULT 'ru'

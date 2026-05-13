@@ -12,8 +12,14 @@ def format_money(value: Any, currency: str = "RUB") -> str:
     if not isinstance(value, (int, float)):
         return "—"
     number = f"{int(value):,}".replace(",", " ") if float(value).is_integer() else f"{value:,.2f}".replace(",", " ")
-    sign = "₽" if currency.upper() in {"RUB", "RUR"} else currency.upper()
-    return f"{number} {sign}"
+    code = currency.upper()
+    if code in {"RUB", "RUR"}:
+        return f"{number} ₽"
+    if code == "USD":
+        return f"${number}"
+    if code == "EUR":
+        return f"€{number}"
+    return f"{number} {code}"
 
 
 def format_duration(minutes: Any) -> str:
