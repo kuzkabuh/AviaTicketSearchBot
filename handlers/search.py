@@ -19,6 +19,18 @@ from services.locations import Location, find_locations, get_location_by_code
 from services.tickets import search_ticket_offers
 from states import PopularDirectionState, TicketSearchState
 from utils.formatters import format_calendar_prices, format_offer
+from keyboards import (
+    location_choice_keyboard,
+    nearby_dates_keyboard,
+    offer_subscribe_keyboard,
+    popular_directions_keyboard,
+    trip_type_keyboard,
+)
+from services.calendar_prices import get_nearby_calendar_prices
+from services.locations import Location, find_locations, get_location_by_code
+from services.tickets import search_ticket_offers
+from states import PopularDirectionState, TicketSearchState
+from utils.formatters import format_nearby_calendar_prices, format_offer
 from utils.validators import parse_positive_int, validate_date, validate_return_date
 
 router = Router(name="search")
@@ -241,6 +253,9 @@ async def show_calendar_prices(callback: CallbackQuery) -> None:
         await callback.answer("Неизвестный период", show_alert=True)
         return
 
+async def show_nearby_calendar(callback: CallbackQuery) -> None:
+    """Показывает календарные цены в диапазоне ±3 дня от выбранной даты."""
+    token = (callback.data or "").split(":")[-1]
     user_id = callback.from_user.id if callback.from_user else 0
     context = _get_calendar_context(token, user_id)
     if not context:
