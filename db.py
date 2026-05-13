@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     last_name TEXT,
+    language_code TEXT NOT NULL DEFAULT 'ru',
+    currency_code TEXT NOT NULL DEFAULT 'RUB',
+    market_code TEXT NOT NULL DEFAULT 'ru',
     created_at TEXT NOT NULL,
     last_activity_at TEXT NOT NULL
 );
@@ -103,6 +106,9 @@ USER_COLUMNS: dict[str, str] = {
     "username": "TEXT",
     "first_name": "TEXT",
     "last_name": "TEXT",
+    "language_code": "TEXT NOT NULL DEFAULT 'ru'",
+    "currency_code": "TEXT NOT NULL DEFAULT 'RUB'",
+    "market_code": "TEXT NOT NULL DEFAULT 'ru'",
     "created_at": "TEXT NOT NULL DEFAULT ''",
     "last_activity_at": "TEXT NOT NULL DEFAULT ''",
 }
@@ -369,6 +375,45 @@ async def upsert_user(
             connection.commit()
 
     await asyncio.to_thread(_upsert)
+
+
+async def get_user_profile(telegram_user_id: int) -> dict[str, Any] | None:
+    """Returns a user profile with localization and currency preferences."""
+    def _get() -> dict[str, Any] | None:
+        with _connect() as connection:
+            row = connection.execute("SELECT * FROM users WHERE telegram_user_id = ?", (telegram_user_id,)).fetchone()
+            return dict(row) if row else None
+
+    return await asyncio.to_thread(_get)
+
+
+async def update_user_preferences(
+    telegram_user_id: int,
+    *,
+    language_code: str | None = None,
+    currency_code: str | None = None,
+    market_code: str | None = None,
+) -> None:
+    """Updates language, currency, and market settings for a user."""
+    fields = {
+        key: value
+        for key, value in {
+            "language_code": language_code,
+            "currency_code": currency_code,
+            "market_code": market_code,
+        }.items()
+        if value is not None
+    }
+    if not fields:
+        return
+
+    def _update() -> None:
+        assignments = ", ".join(f"{field} = ?" for field in fields)
+        with _connect() as connection:
+            connection.execute(f"UPDATE users SET {assignments} WHERE telegram_user_id = ?", (*fields.values(), telegram_user_id))
+            connection.commit()
+
+    await asyncio.to_thread(_update)
 
 
 async def record_bot_event(telegram_user_id: int | None, event_type: str, details: str | None = None) -> None:

@@ -15,6 +15,8 @@ async def search_ticket_offers(
     *,
     trip_type: str = "one_way",
     return_date: str | None = None,
+    currency: str | None = None,
+    market: str | None = None,
 ) -> list[dict[str, Any]]:
     """Возвращает до настроенного лимита разных вариантов перелета."""
     return await search_cheap_tickets(
@@ -24,6 +26,8 @@ async def search_ticket_offers(
         limit=settings.ticket_results_limit,
         trip_type=trip_type,
         return_date=return_date,
+        currency=currency,
+        market=market,
     )
 
 

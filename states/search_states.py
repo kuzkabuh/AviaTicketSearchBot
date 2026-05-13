@@ -15,7 +15,12 @@ class TicketSearchState(StatesGroup):
     waiting_trip_type = State()
     waiting_date = State()
     waiting_return_date = State()
+    waiting_after_departure_choice = State()
     waiting_passengers = State()
+    confirming_search = State()
+    waiting_natural_origin = State()
+    waiting_natural_destination = State()
+    waiting_natural_date = State()
 
 
 class PopularDirectionState(StatesGroup):

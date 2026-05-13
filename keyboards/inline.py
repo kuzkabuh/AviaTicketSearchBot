@@ -5,22 +5,22 @@ from typing import Any
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from services.i18n import SUPPORTED_CURRENCIES, translate
 from services.locations import Location
+from services.search_models import FlightSearchRequest
 
 
 def popular_directions_keyboard(origin: str, directions: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     """Создает кнопки популярных направлений."""
     builder = InlineKeyboardBuilder()
-
     for direction in directions:
         destination = direction.get("destination")
         if not destination:
             continue
-
         price = direction.get("price") or "—"
         airline = direction.get("airline") or "—"
-        builder.button(text=f"{destination} · от {price} RUB · {airline}", callback_data=f"popular:{origin}:{destination}")
-
+        currency = direction.get("currency") or "RUB"
+        builder.button(text=f"{destination} · от {price} {currency} · {airline}", callback_data=f"popular:{origin}:{destination}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -34,20 +34,80 @@ def location_choice_keyboard(kind: str, locations: list[Location]) -> InlineKeyb
     return builder.as_markup()
 
 
-def trip_type_keyboard() -> InlineKeyboardMarkup:
-    """Кнопки выбора типа поездки."""
+def language_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="✈️ В одну сторону", callback_data="trip_type:one_way")
-    builder.button(text="🔁 Туда и обратно", callback_data="trip_type:round_trip")
+    builder.button(text=translate("ru", "language.ru"), callback_data="settings:language:set:ru")
+    builder.button(text=translate("en", "language.en"), callback_data="settings:language:set:en")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def nearby_dates_keyboard(token: str) -> InlineKeyboardMarkup:
+def settings_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "settings.language"), callback_data="settings:language")
+    builder.button(text=translate(language_code, "settings.currency"), callback_data="settings:currency")
+    builder.button(text=translate(language_code, "settings.back"), callback_data="settings:back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def currency_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for currency in sorted(SUPPORTED_CURRENCIES):
+        builder.button(text=currency, callback_data=f"settings:currency:set:{currency}")
+    builder.button(text=translate(language_code, "settings.back"), callback_data="menu:settings")
+    builder.adjust(3, 1)
+    return builder.as_markup()
+
+
+def trip_type_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    """Кнопки выбора типа поездки."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "trip.one_way"), callback_data="trip_type:one_way")
+    builder.button(text=translate(language_code, "trip.round_trip"), callback_data="trip_type:round_trip")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def after_departure_date_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "calendar.one_way"), callback_data="date_flow:one_way")
+    builder.button(text=translate(language_code, "calendar.choose_return"), callback_data="date_flow:return")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def passengers_keyboard(adults: int, children: int, infants: int, language_code: str = "ru") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"− {translate(language_code, 'passengers.adults')}", callback_data="pax:adults:-")
+    builder.button(text=str(adults), callback_data="pax:noop")
+    builder.button(text=f"+ {translate(language_code, 'passengers.adults')}", callback_data="pax:adults:+")
+    builder.button(text=f"− {translate(language_code, 'passengers.children')}", callback_data="pax:children:-")
+    builder.button(text=str(children), callback_data="pax:noop")
+    builder.button(text=f"+ {translate(language_code, 'passengers.children')}", callback_data="pax:children:+")
+    builder.button(text=f"− {translate(language_code, 'passengers.infants')}", callback_data="pax:infants:-")
+    builder.button(text=str(infants), callback_data="pax:noop")
+    builder.button(text=f"+ {translate(language_code, 'passengers.infants')}", callback_data="pax:infants:+")
+    builder.button(text=translate(language_code, "passengers.confirm"), callback_data="pax:confirm")
+    builder.adjust(3, 3, 3, 1)
+    return builder.as_markup()
+
+
+def search_confirmation_keyboard(language_code: str = "ru") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=translate(language_code, "confirm.search"), callback_data="confirm:search")
+    builder.button(text=translate(language_code, "confirm.edit_route"), callback_data="confirm:edit_route")
+    builder.button(text=translate(language_code, "confirm.edit_dates"), callback_data="confirm:edit_dates")
+    builder.button(text=translate(language_code, "confirm.edit_passengers"), callback_data="confirm:edit_passengers")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def nearby_dates_keyboard(token: str, language_code: str = "ru") -> InlineKeyboardMarkup:
     """Кнопки для просмотра или пропуска календарных цен рядом с датой поиска."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="📅 Показать даты ±3 дня", callback_data=f"calendar:nearby:{token}")
-    builder.button(text="Не показывать", callback_data=f"calendar:skip:{token}")
+    builder.button(text=translate(language_code, "nearby.show"), callback_data=f"calendar:nearby:{token}")
+    builder.button(text=translate(language_code, "nearby.skip"), callback_data=f"calendar:skip:{token}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -81,13 +141,28 @@ def subscriptions_keyboard(subscriptions: list[dict[str, Any]]) -> InlineKeyboar
     return builder.as_markup()
 
 
-def start_search_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
+def start_search_keyboard(is_admin: bool = False, language_code: str = "ru") -> InlineKeyboardMarkup:
     """Клавиатура быстрого перехода к основным сценариям бота."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔎 Найти билет", callback_data="menu:search")
-    builder.button(text="🔥 Популярные направления", callback_data="menu:popular")
-    builder.button(text="🔔 Мои подписки", callback_data="menu:subscriptions")
+    builder.button(text=translate(language_code, "menu.search"), callback_data="menu:search")
+    builder.button(text=translate(language_code, "menu.smart_search"), callback_data="menu:smart_search")
+    builder.button(text=translate(language_code, "menu.popular"), callback_data="menu:popular")
+    builder.button(text=translate(language_code, "menu.subscriptions"), callback_data="menu:subscriptions")
+    builder.button(text=translate(language_code, "menu.settings"), callback_data="menu:settings")
     if is_admin:
-        builder.button(text="⚙️ Админ-панель", callback_data="menu:admin")
+        builder.button(text=translate(language_code, "menu.admin"), callback_data="menu:admin")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def format_search_confirmation(request: FlightSearchRequest, language_code: str = "ru") -> str:
+    lines = [
+        translate(language_code, "confirm.title"),
+        translate(language_code, "confirm.route", origin=request.origin_display_name, destination=request.destination_display_name),
+        translate(language_code, "confirm.departure", date=request.departure_date),
+    ]
+    if request.return_date:
+        lines.append(translate(language_code, "confirm.return", date=request.return_date))
+    lines.append(translate(language_code, "confirm.passengers", adults=request.adults, children=request.children, infants=request.infants))
+    lines.append(translate(language_code, "confirm.currency", currency=request.currency_code))
+    return "\n".join(lines)
