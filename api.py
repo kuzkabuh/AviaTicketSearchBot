@@ -49,6 +49,38 @@ class TicketOffer:
         return asdict(self)
 
 
+def _format_aviasales_date(date_value: str | None) -> str:
+    """Преобразует YYYY-MM-DD в формат даты Aviasales DDMM."""
+    try:
+        return datetime.strptime((date_value or "")[:10], "%Y-%m-%d").strftime("%d%m")
+    except ValueError:
+        return ""
+
+
+def build_aviasales_search_link(
+    origin: str,
+    destination: str,
+    departure_date: str,
+    *,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+    passengers: int = 1,
+    marker: str | None = None,
+) -> str:
+    """Формирует партнерскую ссылку на выдачу Aviasales для выбранного типа поездки."""
+    date_part = _format_aviasales_date(departure_date)
+    passengers_count = passengers if isinstance(passengers, int) and passengers > 0 else 1
+
+    if trip_type == "round_trip" and return_date:
+        return_part = _format_aviasales_date(return_date)
+        search_path = f"{origin}{date_part}{destination}{return_part}{passengers_count}"
+    else:
+        search_path = f"{origin}{date_part}{destination}{passengers_count}"
+
+    query = urlencode({"marker": marker}) if marker else ""
+    return f"https://www.aviasales.ru/search/{search_path}{'?' + query if query else ''}"
+
+
 class TravelPayoutsAPI:
     """Асинхронный клиент для работы с реальными эндпоинтами Travelpayouts."""
 
@@ -92,24 +124,34 @@ class TravelPayoutsAPI:
             logger.exception("HTTP request to Travelpayouts failed: %s", exc)
             return None
 
-    def _build_ticket_link(self, origin: str, destination: str, departure_date: str, raw_item: dict[str, Any] | None = None) -> str:
+    def _build_ticket_link(
+        self,
+        origin: str,
+        destination: str,
+        departure_date: str,
+        raw_item: dict[str, Any] | None = None,
+        *,
+        trip_type: str = "one_way",
+        return_date: str | None = None,
+    ) -> str:
         """Формирует ссылку на билет или выдачу Aviasales для конкретного маршрута."""
         raw_item = raw_item or {}
-        for field in ("link", "url", "deeplink"):
-            value = raw_item.get(field)
-            if isinstance(value, str) and value.startswith("http"):
-                return value
-            if isinstance(value, str) and value.startswith("/"):
-                return f"https://www.aviasales.ru{value}"
+        if trip_type != "round_trip":
+            for field in ("link", "url", "deeplink"):
+                value = raw_item.get(field)
+                if isinstance(value, str) and value.startswith("http"):
+                    return value
+                if isinstance(value, str) and value.startswith("/"):
+                    return f"https://www.aviasales.ru{value}"
 
-        try:
-            date_part = datetime.strptime(departure_date[:10], "%Y-%m-%d").strftime("%d%m")
-        except ValueError:
-            date_part = ""
-
-        search_path = f"{origin}{date_part}{destination}1"
-        query = urlencode({"marker": self.marker}) if self.marker else ""
-        return f"https://www.aviasales.ru/search/{search_path}{'?' + query if query else ''}"
+        return build_aviasales_search_link(
+            origin,
+            destination,
+            departure_date,
+            trip_type=trip_type,
+            return_date=return_date,
+            marker=self.marker,
+        )
 
     def _extract_departure_date(self, raw_item: dict[str, Any], fallback_date: str) -> str:
         """Достает дату вылета из ответа API или возвращает дату из запроса."""
@@ -149,7 +191,16 @@ class TravelPayoutsAPI:
             return code, code
         return location.city, location.airport
 
-    def _normalize_offer(self, raw_item: dict[str, Any], origin: str, destination: str, fallback_date: str) -> TicketOffer:
+    def _normalize_offer(
+        self,
+        raw_item: dict[str, Any],
+        origin: str,
+        destination: str,
+        fallback_date: str,
+        *,
+        trip_type: str = "one_way",
+        return_date: str | None = None,
+    ) -> TicketOffer:
         """Преобразует один элемент ответа API в единый формат TicketOffer."""
         departure_date = self._extract_departure_date(raw_item, fallback_date)
         airline = str(raw_item.get("airline") or raw_item.get("airline_code") or "не указана")
@@ -180,7 +231,7 @@ class TravelPayoutsAPI:
             airline=airline,
             flight_number=flight_number,
             transfers=transfers,
-            link=self._build_ticket_link(origin, destination, departure_date, raw_item),
+            link=self._build_ticket_link(origin, destination, departure_date, raw_item, trip_type=trip_type, return_date=return_date),
             offer_id=offer_id,
         )
 
@@ -194,21 +245,32 @@ class TravelPayoutsAPI:
         result.sort(key=lambda offer: offer.price if isinstance(offer.price, (int, float)) else float("inf"))
         return result[:limit]
 
-    async def search_cheap_tickets(self, origin: str, destination: str, date: str, limit: int | None = None) -> list[dict[str, Any]]:
+    async def search_cheap_tickets(
+        self,
+        origin: str,
+        destination: str,
+        date: str,
+        limit: int | None = None,
+        *,
+        trip_type: str = "one_way",
+        return_date: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Ищет билеты в нескольких ценовых эндпоинтах и возвращает разные варианты."""
         limit = limit or settings.ticket_results_limit
         offers: list[TicketOffer] = []
-        offers.extend(await self._search_prices_cheap(origin, destination, date))
+        offers.extend(await self._search_prices_cheap(origin, destination, date, trip_type=trip_type, return_date=return_date))
         if len(offers) < max(settings.min_ticket_results, limit):
-            offers.extend(await self._search_prices_latest(origin, destination, date, limit=max(settings.min_ticket_results, limit)))
+            offers.extend(await self._search_prices_latest(origin, destination, date, limit=max(settings.min_ticket_results, limit), trip_type=trip_type, return_date=return_date))
         if len(offers) < max(settings.min_ticket_results, limit):
-            offers.extend(await self._search_calendar(origin, destination, date))
+            offers.extend(await self._search_calendar(origin, destination, date, trip_type=trip_type, return_date=return_date))
 
         normalized = self._deduplicate_offers(offers, limit)
         logger.info("Ticket search %s -> %s date=%s offers=%s", origin, destination, date, len(normalized))
         return [offer.as_dict() for offer in normalized]
 
-    async def _search_prices_cheap(self, origin: str, destination: str, date: str) -> list[TicketOffer]:
+    async def _search_prices_cheap(
+        self, origin: str, destination: str, date: str, *, trip_type: str = "one_way", return_date: str | None = None
+    ) -> list[TicketOffer]:
         """Парсит ``/v1/prices/cheap``."""
         params = {"origin": origin, "destination": destination, "depart_date": date, "currency": self.currency.lower()}
         payload = await self._make_request("/v1/prices/cheap", params)
@@ -220,9 +282,18 @@ class TravelPayoutsAPI:
             return []
 
         raw_items = [destination_data] if "price" in destination_data else [item for item in destination_data.values() if isinstance(item, dict)]
-        return [self._normalize_offer(item, origin, destination, date) for item in raw_items]
+        return [self._normalize_offer(item, origin, destination, date, trip_type=trip_type, return_date=return_date) for item in raw_items]
 
-    async def _search_prices_latest(self, origin: str, destination: str, date: str, limit: int) -> list[TicketOffer]:
+    async def _search_prices_latest(
+        self,
+        origin: str,
+        destination: str,
+        date: str,
+        limit: int,
+        *,
+        trip_type: str = "one_way",
+        return_date: str | None = None,
+    ) -> list[TicketOffer]:
         """Парсит ``/v2/prices/latest`` для получения нескольких вариантов."""
         params = {
             "origin": origin,
@@ -238,16 +309,22 @@ class TravelPayoutsAPI:
         data = payload.get("data", []) if payload else []
         if not isinstance(data, list):
             return []
-        return [self._normalize_offer(item, origin, destination, date) for item in data if isinstance(item, dict)]
+        return [self._normalize_offer(item, origin, destination, date, trip_type=trip_type, return_date=return_date) for item in data if isinstance(item, dict)]
 
-    async def _search_calendar(self, origin: str, destination: str, date: str) -> list[TicketOffer]:
+    async def _search_calendar(
+        self, origin: str, destination: str, date: str, *, trip_type: str = "one_way", return_date: str | None = None
+    ) -> list[TicketOffer]:
         """Парсит ``/v2/prices/calendar`` как резервный источник."""
         params = {"origin": origin, "destination": destination, "departure_at": date, "currency": self.currency.lower()}
         payload = await self._make_request("/v2/prices/calendar", params)
         data = payload.get("data", {}) if payload else {}
         if not isinstance(data, dict):
             return []
-        return [self._normalize_offer(item, origin, destination, str(flight_date)) for flight_date, item in data.items() if isinstance(item, dict)]
+        return [
+            self._normalize_offer(item, origin, destination, str(flight_date), trip_type=trip_type, return_date=return_date)
+            for flight_date, item in data.items()
+            if isinstance(item, dict)
+        ]
 
     async def get_calendar_prices(self, origin: str, destination: str, date: str) -> list[dict[str, Any]]:
         """Получает календарь цен через ``/v2/prices/calendar``."""
@@ -277,9 +354,17 @@ class TravelPayoutsAPI:
 travel_api = TravelPayoutsAPI()
 
 
-async def search_cheap_tickets(origin: str, destination: str, date: str, limit: int | None = None) -> list[dict[str, Any]]:
+async def search_cheap_tickets(
+    origin: str,
+    destination: str,
+    date: str,
+    limit: int | None = None,
+    *,
+    trip_type: str = "one_way",
+    return_date: str | None = None,
+) -> list[dict[str, Any]]:
     """Функция-обертка для поиска дешевых билетов из хендлеров."""
-    return await travel_api.search_cheap_tickets(origin, destination, date, limit=limit)
+    return await travel_api.search_cheap_tickets(origin, destination, date, limit=limit, trip_type=trip_type, return_date=return_date)
 
 
 async def get_calendar_prices(origin: str, destination: str, date: str) -> list[dict[str, Any]]:

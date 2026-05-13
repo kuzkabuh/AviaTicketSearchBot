@@ -12,7 +12,9 @@ class TicketSearchState(StatesGroup):
     choosing_origin = State()
     waiting_destination = State()
     choosing_destination = State()
+    waiting_trip_type = State()
     waiting_date = State()
+    waiting_return_date = State()
     waiting_passengers = State()
 
 
@@ -29,3 +31,9 @@ class AdminBroadcastState(StatesGroup):
 
     waiting_text = State()
     waiting_confirmation = State()
+
+
+class SubscriptionCreateState(StatesGroup):
+    """Состояния сценария создания подписки."""
+
+    waiting_target_price = State()
