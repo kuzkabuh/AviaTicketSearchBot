@@ -38,6 +38,18 @@ def validate_date(date_string: str | None) -> bool:
     return today + timedelta(days=1) <= target_date <= today + timedelta(days=365)
 
 
+def validate_api_date(date_string: str | None) -> bool:
+    """Проверяет формат даты, допустимый Aviasales Data API: YYYY-MM или YYYY-MM-DD."""
+    text = (date_string or "").strip()
+    for date_format in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            datetime.strptime(text, date_format)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def validate_return_date(return_date_string: str | None, departure_date_string: str | None) -> bool:
     """Проверяет дату возврата: формат YYYY-MM-DD и строго позже даты вылета."""
     try:
